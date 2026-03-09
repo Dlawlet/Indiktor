@@ -69,6 +69,17 @@
       text-shadow: 0 0 30px rgba(240,165,0,0.5), 0 0 60px rgba(240,165,0,0.2);
     }
     .logo span { color: var(--cyan); text-shadow: 0 0 20px rgba(0,212,255,0.5); }
+    .nav-links { display:flex; gap:.6rem; margin-left:1.5rem; }
+    .nav-links a {
+      font-family:'Orbitron', monospace;
+      font-size:.55rem; letter-spacing:.15em;
+      padding:.3rem .7rem; border-radius:2px;
+      border:1px solid var(--border);
+      color:var(--dim); text-decoration:none;
+      transition: color .2s, border-color .2s, background .2s;
+    }
+    .nav-links a:hover { color:var(--amber); border-color:var(--amber); }
+    .nav-links a.active { color:var(--amber); border-color:var(--amber); background:rgba(240,165,0,0.08); }
     .header-right { display:flex; flex-direction:column; align-items:flex-end; gap:.3rem; }
     .btc-price {
       font-size: 1.1rem; font-weight:600; color: var(--cyan);
@@ -234,7 +245,13 @@
 <body>
 
 <header>
-  <div class="logo">BTC <span>SIGNAL</span></div>
+  <div style="display:flex;align-items:center">
+    <div class="logo">BTC <span>SIGNAL</span></div>
+    <nav class="nav-links">
+      <a href="/" class="active">BTC</a>
+      <a href="/eth">ETH</a>
+    </nav>
+  </div>
   <div class="header-right">
     <div class="btc-price" id="btc-price">—</div>
     <div class="header-meta">
