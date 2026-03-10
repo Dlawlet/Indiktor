@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>BTC Signal Dashboard</title>
+  <title>ETH Signal Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet"/>
   <style>
@@ -81,7 +81,7 @@
     .nav-links a:hover { color:var(--amber); border-color:var(--amber); }
     .nav-links a.active { color:var(--amber); border-color:var(--amber); background:rgba(240,165,0,0.08); }
     .header-right { display:flex; flex-direction:column; align-items:flex-end; gap:.3rem; }
-    .btc-price {
+    .eth-price {
       font-size: 1.1rem; font-weight:600; color: var(--cyan);
       text-shadow: 0 0 15px rgba(0,212,255,0.4);
       letter-spacing:.05em;
@@ -246,14 +246,14 @@
 
 <header>
   <div style="display:flex;align-items:center">
-    <div class="logo">BTC <span>SIGNAL</span></div>
+    <div class="logo">ETH <span>SIGNAL</span></div>
     <nav class="nav-links">
-      <a href="/" class="active">BTC</a>
-      <a href="/eth">ETH</a>
+      <a href="/">BTC</a>
+      <a href="/eth" class="active">ETH</a>
     </nav>
   </div>
   <div class="header-right">
-    <div class="btc-price" id="btc-price">—</div>
+    <div class="eth-price" id="eth-price">—</div>
     <div class="header-meta">
       <span class="live-dot"></span>
       <span id="last-update">LOADING DATA…</span>
@@ -262,6 +262,10 @@
 </header>
 
 <main>
+
+  <div style="margin-bottom:1.5rem;padding:.8rem 1rem;background:rgba(255,165,0,0.06);border:1px solid rgba(255,165,0,0.2);border-radius:3px;font-size:.58rem;color:var(--amber);line-height:1.7;letter-spacing:.04em">
+    ⚠️ <strong>DATA SOURCING CAUTION</strong> — This dashboard reuses BTC-calibrated indicator thresholds for ETH. The Fear &amp; Greed Index is crypto-wide (BTC-focused, not ETH-specific). Pi Cycle Top was designed for Bitcoin's cycle. Scoring thresholds (200W MA, 2Y MA, Puell Proxy) were originally calibrated against BTC price history. Interpret ETH signals with additional care.
+  </div>
 
   <!-- OVERALL GAUGES -->
   <div class="overall-row">
@@ -327,7 +331,7 @@
 
     <div class="formula-note">
       <strong>OVERALL LT FORMULA</strong> — Weighted avg (available indicators):
-      200W MA ×25% + 2Y MA Mult. ×25% + Pi Cycle ×20% + Puell Multiple ×20% + BTC Dominance ×10%
+      200W MA ×25% + 2Y MA Mult. ×25% + Pi Cycle ×20% + Puell Multiple ×20% + ETH Dominance ×10%
       | MVRV &amp; Realized Price excluded (Glassnode — no free API)
     </div>
   </div>
@@ -338,6 +342,7 @@
   <span>Sources: <a href="https://binance.com" target="_blank">Binance REST</a> · <a href="https://coingecko.com" target="_blank">CoinGecko</a> · <a href="https://alternative.me/crypto/fear-and-greed-index/" target="_blank">Alternative.me</a></span>
   <span>Auto-refreshes every 5 min</span>
   <span>~ Puell Multiple is approximated (price / 365D SMA) — real metric requires on-chain miner revenue</span>
+  <span>⚠ Fear &amp; Greed Index is crypto-wide (BTC-focused). Pi Cycle thresholds designed for BTC. Use ETH signals with caution.</span>
 </footer>
 
 <script>
@@ -477,12 +482,12 @@ async function get(url) {
 
 async function getKlines(days) {
   const limit = Math.min(days, 1000);
-  const recent = await get(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=${limit}`);
+  const recent = await get(`https://api.binance.com/api/v3/klines?symbol=ETHUSDT&interval=1d&limit=${limit}`);
   if (days <= 1000) return recent;
   // recent[0][0] = open time of oldest candle, recent[0][6] = close time
   // Use close time of oldest candle as endTime so the next batch ends cleanly before it
   const oldestCloseTime = recent[0][6];
-  const extra = await get(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=${Math.min(days - 1000, 1000)}&endTime=${oldestCloseTime - 1}`);
+  const extra = await get(`https://api.binance.com/api/v3/klines?symbol=ETHUSDT&interval=1d&limit=${Math.min(days - 1000, 1000)}&endTime=${oldestCloseTime - 1}`);
   return [...extra, ...recent];
 }
 
@@ -606,18 +611,16 @@ function scorePiCycle(closes) {
   return 82;
 }
 
-function scoreBTCDom(mcp) {
-  // High BTC dom during bear = capital fleeing alts to safety of BTC → neutral/mild bullish BTC
-  // High BTC dom during accumulation = smart money accumulating → bullish
-  // Low BTC dom = altseason / risk-on → BTC relatively less interesting
-  const d = mcp?.btc || 50;
-  if (d > 62) return 65;
-  if (d > 58) return 60;
-  if (d > 54) return 55;
-  if (d > 50) return 50;
-  if (d > 45) return 44;
-  if (d > 40) return 38;
-  return 30;
+function scoreETHDom(mcp) {
+  // ETH dominance typically 10-25%. High ETH dom = ETH attracting capital = bullish for ETH.
+  const d = mcp?.eth || 18;
+  if (d > 22) return 72;
+  if (d > 20) return 64;
+  if (d > 18) return 56;
+  if (d > 16) return 50;
+  if (d > 14) return 44;
+  if (d > 12) return 38;
+  return 28;
 }
 
 function scorePuellProxy(closes) {
@@ -654,12 +657,12 @@ const CARDS = [
   ['grid-st-endo',  'funding',   'FUNDING RATE',              'Binance Futures', false, true ],
   ['grid-st-endo',  'basis',     'FUTURES BASIS',             'Binance Futures', false, true ],
   ['grid-st-endo',  'oi',        'OPEN INTEREST TREND',       'Binance Futures', false, false],
-  ['grid-st-sent',  'fng',       'FEAR & GREED INDEX',        'alternative.me',  false, true ],
+  ['grid-st-sent',  'fng',       'FEAR & GREED INDEX',        'alternative.me ⚠️', false, true ],
   ['grid-st-sent',  'stabledom', 'STABLECOIN DOMINANCE',      'CoinGecko',       false, false],
   ['grid-lt-endo',  'ma200w',    '200W MA HEATMAP',           'Binance Spot',    false, false],
   ['grid-lt-endo',  'ma2y',      '2Y MA MULTIPLIER',          'Binance Spot',    false, false],
-  ['grid-lt-endo',  'picycle',   'PI CYCLE TOP',              'Binance Spot',    false, true ],
-  ['grid-lt-endo',  'btcdom',    'BTC DOMINANCE',             'CoinGecko',       false, false],
+  ['grid-lt-endo',  'picycle',   'PI CYCLE TOP',              'Binance Spot ⚠️', false, true ],
+  ['grid-lt-endo',  'ethdom',    'ETH DOMINANCE',             'CoinGecko',       false, false],
   ['grid-lt-chain', 'puell',     'PRICE/365D SMA ⚠ PROXY',   'Binance Spot',    false, false],
   ['grid-lt-chain', 'mvrv',      'MVRV Z-SCORE',              'Glassnode',       true,  false],
   ['grid-lt-chain', 'realised',  'REALIZED PRICE RATIO',      'Glassnode',       true,  false],
@@ -708,8 +711,8 @@ async function loadAll() {
   document.getElementById('last-update').textContent = 'REFRESHING…';
 
   const [premIdx, oiHist, fng, cg, klines] = await Promise.allSettled([
-    get('https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT'),
-    get('https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=1d&limit=30'),
+    get('https://fapi.binance.com/fapi/v1/premiumIndex?symbol=ETHUSDT'),
+    get('https://fapi.binance.com/futures/data/openInterestHist?symbol=ETHUSDT&period=1d&limit=30'),
     get('https://api.alternative.me/fng/?limit=1'),
     get('https://api.coingecko.com/api/v3/global'),
     getKlines(1500),
@@ -736,8 +739,8 @@ async function loadAll() {
     scores.basis = scoreBasis(mark, idx);
     renderCard('basis', scores.basis, `${bpNum >= 0 ? '+' : ''}${bp}%`);
 
-    // BTC price from index
-    document.getElementById('btc-price').textContent =
+    // ETH price from index
+    document.getElementById('eth-price').textContent =
       '$' + idx.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
   } else {
     renderCard('basis', NaN, 'FETCH ERROR');
@@ -761,7 +764,7 @@ async function loadAll() {
       const arrow = v => v > 0.02 ? '↑' : v < -0.02 ? '↓' : '→';
       regime = ` OI${arrow(oiChg)} P${arrow(pChg)}`;
     }
-    renderCard('oi', scores.oi, `${oiVal}k BTC${regime}`);
+    renderCard('oi', scores.oi, `${oiVal}k ETH${regime}`);
   } else {
     renderCard('oi', NaN, 'FETCH ERROR');
   }
@@ -786,13 +789,13 @@ async function loadAll() {
     renderCard('stabledom', NaN, 'FETCH ERROR');
   }
 
-  // ── BTC Dominance ─────────────────────────────────────
+  // ── ETH Dominance ─────────────────────────────────────
   if (cg.status === 'fulfilled') {
     const mcp = cg.value.data.market_cap_percentage;
-    scores.btcdom = scoreBTCDom(mcp);
-    renderCard('btcdom', scores.btcdom, `${(mcp?.btc || 0).toFixed(1)}% of market`);
+    scores.ethdom = scoreETHDom(mcp);
+    renderCard('ethdom', scores.ethdom, `${(mcp?.eth || 0).toFixed(1)}% of market`);
   } else {
-    renderCard('btcdom', NaN, 'FETCH ERROR');
+    renderCard('ethdom', NaN, 'FETCH ERROR');
   }
 
   // ── Long-term MA indicators ───────────────────────────
@@ -801,8 +804,8 @@ async function loadAll() {
     const price = closes[closes.length - 1];
 
     // Update price if futures wasn't available
-    if (document.getElementById('btc-price').textContent === '—')
-      document.getElementById('btc-price').textContent =
+    if (document.getElementById('eth-price').textContent === '—')
+      document.getElementById('eth-price').textContent =
         '$' + price.toLocaleString('en-US', { minimumFractionDigits: 0 });
 
     // 200W MA
@@ -865,7 +868,7 @@ async function loadAll() {
     [scores.ma2y,    25],
     [scores.picycle, 20],
     [scores.puell,   20],
-    [scores.btcdom,  10],
+    [scores.ethdom,  10],
   ]);
 
   renderOverall('overall-st', stScore);
