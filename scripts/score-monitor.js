@@ -5,6 +5,9 @@ const path = require('path');
 
 const STATE_PATH = process.env.STATE_PATH || path.join('automation', 'state.json');
 const THRESHOLD = parseFloat(process.env.THRESHOLD || '0.10'); // 10% relative move
+const TEST_EMAIL = process.env.TEST_EMAIL === 'true';
+const TEST_EMAIL_SUBJECT = process.env.TEST_EMAIL_SUBJECT || 'Indiktor alert: test notification';
+const TEST_EMAIL_BODY = process.env.TEST_EMAIL_BODY || 'This is a test notification to verify the email delivery pipeline.';
 
 const ASSETS = [
   { key: 'BTC', symbol: 'BTCUSDT', dominanceScore: scoreBTCDom },
@@ -12,6 +15,20 @@ const ASSETS = [
 ];
 
 async function main() {
+  if (TEST_EMAIL) {
+    const body = buildTestBody(THRESHOLD, STATE_PATH);
+    await writeOutputs({
+      changes: [],
+      body,
+      threshold: THRESHOLD,
+      statePath: STATE_PATH,
+      emailNeeded: true,
+      subject: TEST_EMAIL_SUBJECT,
+    });
+    console.log('Test email requested; skipping data fetch/state updates.');
+    return;
+  }
+
   const previous = await readState(STATE_PATH);
   const shared = await fetchShared();
 
@@ -336,21 +353,27 @@ async function writeState(statePath, state) {
   await fs.writeFile(statePath, JSON.stringify(state, null, 2));
 }
 
-async function writeOutputs({ changes, body, threshold, statePath }) {
+async function writeOutputs({ changes = [], body, threshold, statePath, emailNeeded = null, subject }) {
   const outputPath = process.env.OUTPUT_FILE || process.env.GITHUB_OUTPUT;
   if (!outputPath) return;
   const lines = [];
-  lines.push(`email_needed=${changes.length > 0}`);
+  const shouldEmail = typeof emailNeeded === 'boolean' ? emailNeeded : changes.length > 0;
+  lines.push(`email_needed=${shouldEmail}`);
   lines.push(`threshold=${(threshold * 100).toFixed(0)}%`);
   lines.push(`state_file=${statePath}`);
-  if (changes.length > 0) {
-    const subject = `Indiktor alert: ${changes.map(c => `${c.asset} ${c.horizon === 'shortTerm' ? 'ST' : 'LT'}`).join(' / ')} shift`;
-    lines.push(`subject=${subject}`);
+  if (shouldEmail) {
+    const subjectLine = subject || buildSubject(changes);
+    lines.push(`subject=${subjectLine}`);
     lines.push('body<<EOF');
     lines.push(body);
     lines.push('EOF');
   }
   await fs.appendFile(outputPath, lines.join('\n') + '\n');
+}
+
+function buildSubject(changes) {
+  if (!changes || changes.length === 0) return 'Indiktor alert';
+  return `Indiktor alert: ${changes.map(c => `${c.asset} ${c.horizon === 'shortTerm' ? 'ST' : 'LT'}`).join(' / ')} shift`;
 }
 
 function mergeState(previous, current) {
@@ -374,6 +397,17 @@ function formatPct(change) {
 
 function round(val) {
   return isFinite(val) ? Math.round(val * 100) / 100 : NaN;
+}
+
+function buildTestBody(threshold, statePath) {
+  const lines = [];
+  lines.push('Indiktor test email');
+  lines.push('');
+  lines.push(TEST_EMAIL_BODY);
+  lines.push('');
+  lines.push(`Threshold (for normal runs): ${(threshold * 100).toFixed(0)}%`);
+  lines.push(`State file: ${statePath}`);
+  return lines.join('\n');
 }
 
 main().catch(err => {

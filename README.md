@@ -21,3 +21,7 @@ Provide SMTP credentials as repository secrets before the workflow can send mail
 - `ALERT_FROM_ADDRESS`
 
 Optional: set `THRESHOLD` (e.g. `0.1` for 10%) or `STATE_PATH` in the workflow if you want to adjust defaults.
+
+### Send a test email
+
+Trigger the **Score monitor** workflow manually and set the `test_email` input to `true`. The run will skip data fetching and state updates, and immediately send a test message (customize with `test_email_subject`/`test_email_body`). This is useful for verifying SMTP credentials without waiting for a threshold breach.
