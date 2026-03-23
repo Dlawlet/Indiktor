@@ -388,7 +388,7 @@ async function writeOutputs({ changes = [], body, threshold, statePath, emailNee
   lines.push(`threshold=${(threshold * 100).toFixed(0)}%`);
   lines.push(`state_file=${statePath}`);
   if (shouldEmail) {
-    const subjectLine = subject ?? (changes.length > 0 ? buildSubject(changes) : 'Indiktor alert');
+    const subjectLine = subject ?? buildSubject(changes);
     lines.push(`subject=${subjectLine}`);
     lines.push('body<<EOF');
     lines.push(body);
