@@ -9,6 +9,22 @@ const TEST_EMAIL = process.env.TEST_EMAIL === 'true';
 const TEST_EMAIL_SUBJECT = process.env.TEST_EMAIL_SUBJECT || 'Indiktor alert: test notification';
 const TEST_EMAIL_BODY = process.env.TEST_EMAIL_BODY || 'This is a test notification to verify the email delivery pipeline.';
 
+function buildSubject(changes) {
+  if (!changes || changes.length === 0) return 'Indiktor alert';
+  return `Indiktor alert: ${changes.map(c => `${c.asset} ${c.horizon === 'shortTerm' ? 'ST' : 'LT'}`).join(' / ')} shift`;
+}
+
+function buildTestBody(threshold, statePath) {
+  const lines = [];
+  lines.push('Indiktor test email');
+  lines.push('');
+  lines.push(TEST_EMAIL_BODY);
+  lines.push('');
+  lines.push(`Threshold (for normal runs): ${(threshold * 100).toFixed(0)}%`);
+  lines.push(`State file: ${statePath}`);
+  return lines.join('\n');
+}
+
 const ASSETS = [
   { key: 'BTC', symbol: 'BTCUSDT', dominanceScore: scoreBTCDom },
   { key: 'ETH', symbol: 'ETHUSDT', dominanceScore: scoreETHDom },
@@ -357,7 +373,7 @@ async function writeOutputs({ changes = [], body, threshold, statePath, emailNee
   const outputPath = process.env.OUTPUT_FILE || process.env.GITHUB_OUTPUT;
   if (!outputPath) return;
   const lines = [];
-  const shouldEmail = typeof emailNeeded === 'boolean' ? emailNeeded : changes.length > 0;
+  const shouldEmail = emailNeeded ?? changes.length > 0;
   lines.push(`email_needed=${shouldEmail}`);
   lines.push(`threshold=${(threshold * 100).toFixed(0)}%`);
   lines.push(`state_file=${statePath}`);
@@ -369,11 +385,6 @@ async function writeOutputs({ changes = [], body, threshold, statePath, emailNee
     lines.push('EOF');
   }
   await fs.appendFile(outputPath, lines.join('\n') + '\n');
-}
-
-function buildSubject(changes) {
-  if (!changes || changes.length === 0) return 'Indiktor alert';
-  return `Indiktor alert: ${changes.map(c => `${c.asset} ${c.horizon === 'shortTerm' ? 'ST' : 'LT'}`).join(' / ')} shift`;
 }
 
 function mergeState(previous, current) {
@@ -397,17 +408,6 @@ function formatPct(change) {
 
 function round(val) {
   return isFinite(val) ? Math.round(val * 100) / 100 : NaN;
-}
-
-function buildTestBody(threshold, statePath) {
-  const lines = [];
-  lines.push('Indiktor test email');
-  lines.push('');
-  lines.push(TEST_EMAIL_BODY);
-  lines.push('');
-  lines.push(`Threshold (for normal runs): ${(threshold * 100).toFixed(0)}%`);
-  lines.push(`State file: ${statePath}`);
-  return lines.join('\n');
 }
 
 main().catch(err => {
