@@ -28,7 +28,7 @@ async function main() {
   await writeOutputs({ changes, body, threshold: THRESHOLD, statePath: STATE_PATH });
 
   if (changes.length === 0) {
-    console.log('No ~10% shifts detected.');
+    console.log(`No ${(THRESHOLD * 100).toFixed(0)}% shifts detected.`);
   } else {
     console.log('Changes detected:\n' + body);
   }
