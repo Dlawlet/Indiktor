@@ -8,7 +8,8 @@ on:
       test_email:
         description: 'Send a test notification email instead of running the full monitor'
         required: false
-        default: 'false'
+        type: boolean
+        default: false
       test_email_subject:
         description: 'Optional custom subject for the test email'
         required: false

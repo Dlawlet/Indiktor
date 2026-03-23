@@ -5,7 +5,7 @@ const path = require('path');
 
 const STATE_PATH = process.env.STATE_PATH || path.join('automation', 'state.json');
 const THRESHOLD = parseFloat(process.env.THRESHOLD || '0.10'); // 10% relative move
-const TEST_EMAIL = process.env.TEST_EMAIL === 'true';
+const TEST_EMAIL = String(process.env.TEST_EMAIL || '').toLowerCase() === 'true';
 const TEST_EMAIL_SUBJECT = process.env.TEST_EMAIL_SUBJECT || 'Indiktor alert: test notification';
 const TEST_EMAIL_BODY = process.env.TEST_EMAIL_BODY || 'This is a test notification to verify the email delivery pipeline.';
 
@@ -369,6 +369,16 @@ async function writeState(statePath, state) {
   await fs.writeFile(statePath, JSON.stringify(state, null, 2));
 }
 
+/**
+ * Emit GitHub Actions-style outputs for the monitor.
+ * @param {Object} params
+ * @param {Array} params.changes - Detected score changes (can be empty when forcing email).
+ * @param {string} params.body - Email body to emit.
+ * @param {number} params.threshold - Threshold used for comparison.
+ * @param {string} params.statePath - Path of the persisted state file.
+ * @param {boolean|null} params.emailNeeded - Override whether an email should be sent.
+ * @param {string} params.subject - Optional explicit subject to use.
+ */
 async function writeOutputs({ changes = [], body, threshold, statePath, emailNeeded = null, subject }) {
   const outputPath = process.env.OUTPUT_FILE || process.env.GITHUB_OUTPUT;
   if (!outputPath) return;
@@ -378,7 +388,7 @@ async function writeOutputs({ changes = [], body, threshold, statePath, emailNee
   lines.push(`threshold=${(threshold * 100).toFixed(0)}%`);
   lines.push(`state_file=${statePath}`);
   if (shouldEmail) {
-    const subjectLine = subject || buildSubject(changes);
+    const subjectLine = subject ?? (changes.length > 0 ? buildSubject(changes) : 'Indiktor alert');
     lines.push(`subject=${subjectLine}`);
     lines.push('body<<EOF');
     lines.push(body);
