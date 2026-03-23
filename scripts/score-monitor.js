@@ -9,9 +9,13 @@ const TEST_EMAIL = process.env.TEST_EMAIL === 'true';
 const TEST_EMAIL_SUBJECT = process.env.TEST_EMAIL_SUBJECT || 'Indiktor alert: test notification';
 const TEST_EMAIL_BODY = process.env.TEST_EMAIL_BODY || 'This is a test notification to verify the email delivery pipeline.';
 
+function labelHorizon(horizon) {
+  return horizon === 'shortTerm' ? 'ST' : 'LT';
+}
+
 function buildSubject(changes = []) {
   if (changes.length === 0) return 'Indiktor alert: no changes detected';
-  return `Indiktor alert: ${changes.map(c => `${c.asset} ${c.horizon === 'shortTerm' ? 'ST' : 'LT'}`).join(' / ')} shift`;
+  return `Indiktor alert: ${changes.map(c => `${c.asset} ${labelHorizon(c.horizon)}`).join(' / ')} shift`;
 }
 
 function buildTestBody(threshold, statePath) {
