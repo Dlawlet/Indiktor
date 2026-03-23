@@ -10,7 +10,7 @@ const TEST_EMAIL_SUBJECT = process.env.TEST_EMAIL_SUBJECT || 'Indiktor alert: te
 const TEST_EMAIL_BODY = process.env.TEST_EMAIL_BODY || 'This is a test notification to verify the email delivery pipeline.';
 
 function buildSubject(changes) {
-  if (!changes || changes.length === 0) return 'Indiktor alert';
+  if (!changes || changes.length === 0) return 'Indiktor alert: notification';
   return `Indiktor alert: ${changes.map(c => `${c.asset} ${c.horizon === 'shortTerm' ? 'ST' : 'LT'}`).join(' / ')} shift`;
 }
 
@@ -377,7 +377,7 @@ async function writeState(statePath, state) {
  * @param {number} params.threshold - Threshold used for comparison.
  * @param {string} params.statePath - Path of the persisted state file.
  * @param {boolean|undefined} params.emailNeeded - Override whether an email should be sent.
- * @param {string} params.subject - Optional explicit subject to use.
+ * @param {string} params.subject - Optional explicit subject override (e.g. test/forced emails). Defaults to buildSubject(changes).
  */
 async function writeOutputs({ changes = [], body, threshold, statePath, emailNeeded, subject }) {
   const outputPath = process.env.OUTPUT_FILE || process.env.GITHUB_OUTPUT;
