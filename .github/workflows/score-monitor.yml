@@ -1,0 +1,63 @@
+name: Score monitor
+
+on:
+  schedule:
+    - cron: '0 */8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Restore previous state artifact
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          workflow: score-monitor.yml
+          branch: ${{ github.ref_name }}
+          name: score-state
+          path: automation
+          if_no_artifact_found: ignore
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run score monitor
+        id: monitor
+        env:
+          STATE_PATH: automation/state.json
+        run: node scripts/score-monitor.js
+
+      - name: Upload state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: score-state
+          path: automation/state.json
+          retention-days: 14
+
+      - name: Send email alert
+        if: steps.monitor.outputs.email_needed == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.ALERT_SMTP_SERVER }}
+          server_port: ${{ secrets.ALERT_SMTP_PORT }}
+          username: ${{ secrets.ALERT_SMTP_USERNAME }}
+          password: ${{ secrets.ALERT_SMTP_PASSWORD }}
+          subject: ${{ steps.monitor.outputs.subject }}
+          to: winercoiner@gmail.com
+          from: ${{ secrets.ALERT_FROM_ADDRESS }}
+          secure: true
+          body: ${{ steps.monitor.outputs.body }}
+          convert_markdown: false
