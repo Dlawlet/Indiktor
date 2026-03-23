@@ -38,8 +38,7 @@ async function main() {
       body,
       threshold: THRESHOLD,
       statePath: STATE_PATH,
-      emailNeeded: true,
-      subject: TEST_EMAIL_SUBJECT,
+      overrides: { emailNeeded: true, subject: TEST_EMAIL_SUBJECT },
     });
     console.log('Test email requested; skipping data fetch/state updates.');
     return;
@@ -376,10 +375,12 @@ async function writeState(statePath, state) {
  * @param {string} params.body - Email body to emit.
  * @param {number} params.threshold - Threshold used for comparison.
  * @param {string} params.statePath - Path of the persisted state file.
- * @param {boolean|undefined} params.emailNeeded - Override whether an email should be sent.
- * @param {string} params.subject - Optional explicit subject override (e.g. test/forced emails). Defaults to buildSubject(changes).
+ * @param {Object} [params.overrides] - Optional overrides for output behavior.
+ * @param {boolean|undefined} params.overrides.emailNeeded - Override whether an email should be sent.
+ * @param {string} params.overrides.subject - Optional explicit subject override (e.g. test/forced emails). Defaults to buildSubject(changes).
  */
-async function writeOutputs({ changes = [], body, threshold, statePath, emailNeeded, subject }) {
+async function writeOutputs({ changes = [], body, threshold, statePath, overrides = {} }) {
+  const { emailNeeded, subject } = overrides;
   const outputPath = process.env.OUTPUT_FILE || process.env.GITHUB_OUTPUT;
   if (!outputPath) return;
   const lines = [];
