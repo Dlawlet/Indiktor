@@ -10,7 +10,7 @@ const TEST_EMAIL_SUBJECT = process.env.TEST_EMAIL_SUBJECT || 'Indiktor alert: te
 const TEST_EMAIL_BODY = process.env.TEST_EMAIL_BODY || 'This is a test notification to verify the email delivery pipeline.';
 
 function buildSubject(changes) {
-  if (!changes || changes.length === 0) return 'Indiktor alert: notification';
+  if (!changes || changes.length === 0) return 'Indiktor alert: no changes detected';
   return `Indiktor alert: ${changes.map(c => `${c.asset} ${c.horizon === 'shortTerm' ? 'ST' : 'LT'}`).join(' / ')} shift`;
 }
 
@@ -38,7 +38,7 @@ async function main() {
       body,
       threshold: THRESHOLD,
       statePath: STATE_PATH,
-      overrides: { emailNeeded: true, subject: TEST_EMAIL_SUBJECT },
+      overrides: { forceEmail: true, subject: TEST_EMAIL_SUBJECT },
     });
     console.log('Test email requested; skipping data fetch/state updates.');
     return;
@@ -376,19 +376,19 @@ async function writeState(statePath, state) {
  * @param {number} params.threshold - Threshold used for comparison.
  * @param {string} params.statePath - Path of the persisted state file.
  * @param {Object} [params.overrides] - Optional overrides for output behavior.
- * @param {boolean|undefined} params.overrides.emailNeeded - Override whether an email should be sent.
+ * @param {boolean|undefined} params.overrides.forceEmail - Force whether an email should be sent.
  * @param {string} params.overrides.subject - Optional explicit subject override (e.g. test/forced emails). Defaults to buildSubject(changes).
  */
 async function writeOutputs({ changes = [], body, threshold, statePath, overrides = {} }) {
-  const { emailNeeded, subject } = overrides;
+  const { forceEmail, subject } = overrides;
   const outputPath = process.env.OUTPUT_FILE || process.env.GITHUB_OUTPUT;
   if (!outputPath) return;
   const lines = [];
-  const shouldEmail = emailNeeded ?? changes.length > 0;
-  lines.push(`email_needed=${shouldEmail}`);
+  const shouldSendEmail = forceEmail ?? changes.length > 0;
+  lines.push(`email_needed=${shouldSendEmail}`);
   lines.push(`threshold=${(threshold * 100).toFixed(0)}%`);
   lines.push(`state_file=${statePath}`);
-  if (shouldEmail) {
+  if (shouldSendEmail) {
     const subjectLine = subject ?? buildSubject(changes);
     lines.push(`subject=${subjectLine}`);
     lines.push('body<<EOF');
