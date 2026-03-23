@@ -9,8 +9,8 @@ const TEST_EMAIL = process.env.TEST_EMAIL === 'true';
 const TEST_EMAIL_SUBJECT = process.env.TEST_EMAIL_SUBJECT || 'Indiktor alert: test notification';
 const TEST_EMAIL_BODY = process.env.TEST_EMAIL_BODY || 'This is a test notification to verify the email delivery pipeline.';
 
-function buildSubject(changes) {
-  if (!changes || changes.length === 0) return 'Indiktor alert: no changes detected';
+function buildSubject(changes = []) {
+  if (changes.length === 0) return 'Indiktor alert: no changes detected';
   return `Indiktor alert: ${changes.map(c => `${c.asset} ${c.horizon === 'shortTerm' ? 'ST' : 'LT'}`).join(' / ')} shift`;
 }
 
@@ -384,7 +384,7 @@ async function writeOutputs({ changes = [], body, threshold, statePath, override
   const outputPath = process.env.OUTPUT_FILE || process.env.GITHUB_OUTPUT;
   if (!outputPath) return;
   const lines = [];
-  const shouldSendEmail = forceEmail ?? changes.length > 0;
+  const shouldSendEmail = forceEmail !== undefined ? forceEmail : changes.length > 0;
   lines.push(`email_needed=${shouldSendEmail}`);
   lines.push(`threshold=${(threshold * 100).toFixed(0)}%`);
   lines.push(`state_file=${statePath}`);
