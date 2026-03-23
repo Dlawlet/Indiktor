@@ -49,7 +49,7 @@ jobs:
         id: monitor
         env:
           STATE_PATH: automation/state.json
-          TEST_EMAIL: ${{ github.event.inputs.test_email || '' }}
+          TEST_EMAIL: ${{ github.event.inputs.test_email == true && 'true' || 'false' }}
           TEST_EMAIL_SUBJECT: ${{ github.event.inputs.test_email_subject || '' }}
           TEST_EMAIL_BODY: ${{ github.event.inputs.test_email_body || '' }}
         run: node scripts/score-monitor.js

@@ -372,7 +372,7 @@ async function writeState(statePath, state) {
 /**
  * Emit GitHub Actions-style outputs for the monitor.
  * @param {Object} params
- * @param {Array} params.changes - Detected score changes (can be empty when forcing email).
+ * @param {Array} params.changes - Detected score changes (defaults to an empty array; can be omitted when forcing email).
  * @param {string} params.body - Email body to emit.
  * @param {number} params.threshold - Threshold used for comparison.
  * @param {string} params.statePath - Path of the persisted state file.
