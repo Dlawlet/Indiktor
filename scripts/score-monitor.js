@@ -376,8 +376,8 @@ async function writeState(statePath, state) {
  * @param {number} params.threshold - Threshold used for comparison.
  * @param {string} params.statePath - Path of the persisted state file.
  * @param {Object} [params.overrides] - Optional overrides for output behavior.
- * @param {boolean|undefined} params.overrides.forceEmail - Force whether an email should be sent.
- * @param {string} params.overrides.subject - Optional explicit subject override (e.g. test/forced emails). Defaults to buildSubject(changes).
+ * @param {boolean} [params.overrides.forceEmail] - Force whether an email should be sent.
+ * @param {string} [params.overrides.subject] - Optional explicit subject override (e.g. test/forced emails). Defaults to buildSubject(changes).
  */
 async function writeOutputs({ changes = [], body, threshold, statePath, overrides = {} }) {
   const { forceEmail, subject } = overrides;
