@@ -5,6 +5,29 @@ const path = require('path');
 
 const STATE_PATH = process.env.STATE_PATH || path.join('automation', 'state.json');
 const THRESHOLD = parseFloat(process.env.THRESHOLD || '0.10'); // 10% relative move
+const TEST_EMAIL = process.env.TEST_EMAIL === 'true';
+const TEST_EMAIL_SUBJECT = process.env.TEST_EMAIL_SUBJECT || 'Indiktor alert: test notification';
+const TEST_EMAIL_BODY = process.env.TEST_EMAIL_BODY || 'This is a test notification to verify the email delivery pipeline.';
+
+function labelHorizon(horizon) {
+  return horizon === 'shortTerm' ? 'ST' : 'LT';
+}
+
+function buildSubject(changes = []) {
+  if (changes.length === 0) return 'Indiktor alert: no changes detected';
+  return `Indiktor alert: ${changes.map(c => `${c.asset} ${labelHorizon(c.horizon)}`).join(' / ')} shift`;
+}
+
+function buildTestBody(threshold, statePath) {
+  const lines = [];
+  lines.push('Indiktor test email');
+  lines.push('');
+  lines.push(TEST_EMAIL_BODY);
+  lines.push('');
+  lines.push(`Threshold (for normal runs): ${(threshold * 100).toFixed(0)}%`);
+  lines.push(`State file: ${statePath}`);
+  return lines.join('\n');
+}
 
 const ASSETS = [
   { key: 'BTC', symbol: 'BTCUSDT', dominanceScore: scoreBTCDom },
@@ -12,6 +35,19 @@ const ASSETS = [
 ];
 
 async function main() {
+  if (TEST_EMAIL) {
+    const body = buildTestBody(THRESHOLD, STATE_PATH);
+    await writeOutputs({
+      changes: [],
+      body,
+      threshold: THRESHOLD,
+      statePath: STATE_PATH,
+      overrides: { forceEmail: true, subject: TEST_EMAIL_SUBJECT },
+    });
+    console.log('Test email requested; skipping data fetch/state updates.');
+    return;
+  }
+
   const previous = await readState(STATE_PATH);
   const shared = await fetchShared();
 
@@ -336,16 +372,29 @@ async function writeState(statePath, state) {
   await fs.writeFile(statePath, JSON.stringify(state, null, 2));
 }
 
-async function writeOutputs({ changes, body, threshold, statePath }) {
+/**
+ * Emit GitHub Actions-style outputs for the monitor.
+ * @param {Object} params
+ * @param {Array} params.changes - Detected score changes. If omitted, defaults to an empty array (useful when forcing email).
+ * @param {string} params.body - Email body to emit.
+ * @param {number} params.threshold - Threshold used for comparison.
+ * @param {string} params.statePath - Path of the persisted state file.
+ * @param {Object} [params.overrides] - Optional overrides for output behavior.
+ * @param {boolean} [params.overrides.forceEmail] - Force whether an email should be sent.
+ * @param {string} [params.overrides.subject] - Optional explicit subject override (e.g. test/forced emails). Defaults to buildSubject(changes).
+ */
+async function writeOutputs({ changes = [], body, threshold, statePath, overrides = {} }) {
+  const { forceEmail, subject } = overrides;
   const outputPath = process.env.OUTPUT_FILE || process.env.GITHUB_OUTPUT;
   if (!outputPath) return;
   const lines = [];
-  lines.push(`email_needed=${changes.length > 0}`);
+  const shouldSendEmail = forceEmail !== undefined ? forceEmail : changes.length > 0;
+  lines.push(`email_needed=${shouldSendEmail}`);
   lines.push(`threshold=${(threshold * 100).toFixed(0)}%`);
   lines.push(`state_file=${statePath}`);
-  if (changes.length > 0) {
-    const subject = `Indiktor alert: ${changes.map(c => `${c.asset} ${c.horizon === 'shortTerm' ? 'ST' : 'LT'}`).join(' / ')} shift`;
-    lines.push(`subject=${subject}`);
+  if (shouldSendEmail) {
+    const subjectLine = subject ?? buildSubject(changes);
+    lines.push(`subject=${subjectLine}`);
     lines.push('body<<EOF');
     lines.push(body);
     lines.push('EOF');
