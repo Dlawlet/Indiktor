@@ -422,7 +422,7 @@ function formatPct(change) {
 }
 
 function round(val) {
-  return isFinite(val) ? Math.round(val * 100) / 100 : NaN;
+  return isFinite(val) ? Math.round(val) : NaN;
 }
 
 main().catch(err => {

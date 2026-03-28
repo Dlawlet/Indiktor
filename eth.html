@@ -709,6 +709,8 @@ renderOverall('overall-lt', 50);
 
 async function loadAll() {
   document.getElementById('last-update').textContent = 'REFRESHING…';
+  const priceEl = document.getElementById('eth-price');
+  let priceSource = 'UNAVAILABLE';
 
   const [premIdx, oiHist, fng, cg, klines] = await Promise.allSettled([
     get('https://fapi.binance.com/fapi/v1/premiumIndex?symbol=ETHUSDT'),
@@ -738,10 +740,6 @@ async function loadAll() {
     const bp = bpNum.toFixed(3);
     scores.basis = scoreBasis(mark, idx);
     renderCard('basis', scores.basis, `${bpNum >= 0 ? '+' : ''}${bp}%`);
-
-    // ETH price from index
-    document.getElementById('eth-price').textContent =
-      '$' + idx.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
   } else {
     renderCard('basis', NaN, 'FETCH ERROR');
   }
@@ -773,7 +771,7 @@ async function loadAll() {
   if (fng.status === 'fulfilled') {
     const d = fng.value.data[0];
     scores.fng = scoreFnG(+d.value);
-    renderCard('fng', scores.fng, `${d.value} — ${d.value_classification}`);
+    renderCard('fng', scores.fng, `INDEX ${d.value} (${d.value_classification}) • SCORE ${Math.round(scores.fng)}`);
   } else {
     renderCard('fng', NaN, 'FETCH ERROR');
   }
@@ -802,11 +800,8 @@ async function loadAll() {
   if (klines.status === 'fulfilled') {
     const closes = closesForOI; // reuse — same data already mapped
     const price = closes[closes.length - 1];
-
-    // Update price if futures wasn't available
-    if (document.getElementById('eth-price').textContent === '—')
-      document.getElementById('eth-price').textContent =
-        '$' + price.toLocaleString('en-US', { minimumFractionDigits: 0 });
+    priceEl.textContent = '$' + price.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    priceSource = 'BINANCE SPOT (1D CLOSE)';
 
     // 200W MA
     if (closes.length >= 1400) {
@@ -852,30 +847,43 @@ async function loadAll() {
   } else {
     for (const id of ['ma200w','ma2y','picycle','puell'])
       renderCard(id, NaN, 'FETCH ERROR');
+    if (premIdx.status === 'fulfilled') {
+      const idx = +premIdx.value.indexPrice;
+      priceEl.textContent = '$' + idx.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+      priceSource = 'BINANCE FUTURES INDEX (FALLBACK)';
+    }
   }
 
   // ── OVERALL SCORES ────────────────────────────────────
-  const stScore = wavg([
+  const stPairs = [
     [scores.funding,   25],
     [scores.basis,     20],
     [scores.oi,        15],
     [scores.fng,       30],
     [scores.stabledom, 10],
-  ]);
+  ];
+  const stScore = wavg(stPairs);
 
-  const ltScore = wavg([
+  const ltPairs = [
     [scores.ma200w,  25],
     [scores.ma2y,    25],
     [scores.picycle, 20],
     [scores.puell,   20],
     [scores.ethdom,  10],
-  ]);
+  ];
+  const ltScore = wavg(ltPairs);
 
   renderOverall('overall-st', stScore);
   renderOverall('overall-lt', ltScore);
 
+  const stAvailable = stPairs.filter(([s]) => Number.isFinite(s)).length;
+  const ltAvailable = ltPairs.filter(([s]) => Number.isFinite(s)).length;
+  const partial = [];
+  if (stAvailable < stPairs.length) partial.push(`ST ${stAvailable}/${stPairs.length}`);
+  if (ltAvailable < ltPairs.length) partial.push(`LT ${ltAvailable}/${ltPairs.length}`);
+  const dataQuality = partial.length ? ` • PARTIAL DATA (${partial.join(', ')})` : '';
   document.getElementById('last-update').textContent =
-    'UPDATED ' + new Date().toLocaleTimeString();
+    `UPDATED ${new Date().toLocaleTimeString()} • PRICE: ${priceSource}${dataQuality}`;
 }
 
 // ─── RUN ───────────────────────────────────────────────
