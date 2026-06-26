@@ -272,6 +272,54 @@ function tRunningFlat(c) {
   });
 }
 
+// T9: Expanding triangle — 5 alternating waves (A-B-C-D-E), each LARGER than the
+// prior (opposite of contracting). Less common; breakout direction same as wave A.
+// Requires 6 confirmed pivots.
+function tExpandingTriangle(c) {
+  if (c.length < 6) return null;
+  const p = c.slice(-6);
+  // Compute 5 legs
+  const legs5 = [];
+  for (let i = 1; i < 6; i++) legs5.push(p[i].price - p[i - 1].price);
+  // Strict alternation: consecutive legs must have opposite sign
+  for (let i = 1; i < legs5.length; i++) {
+    if (Math.sign(legs5[i]) === Math.sign(legs5[i - 1]) || legs5[i] === 0) return null;
+  }
+  const sizes = legs5.map(Math.abs);
+  // Each size must NOT be smaller than 90% of the previous (allow small noise buffer)
+  for (let i = 1; i < sizes.length; i++) {
+    if (sizes[i] < sizes[i - 1] * 0.9) return null;
+  }
+  // Require at least 2 clearly expanding pairs (> 10% bigger than prior)
+  const clearPairs = sizes.filter((s, i) => i > 0 && s > sizes[i - 1] * 1.1).length;
+  if (clearPairs < 2) return null;
+  // Breakout direction: same as wave A (first leg)
+  const breakoutDir = Math.sign(legs5[0]);
+  const eLen = sizes[4];
+  const tgt = [0.618, 1.0, 1.618].map((r) => ({
+    label: `${r}× E`, ratio: r,
+    price: p[5].price + breakoutDir * eLen * r,
+  }));
+  return scenario({
+    id: 'expanding-triangle',
+    name: 'Expanding triangle → breakout',
+    pattern: 'continuation',
+    bias: biasOf(breakoutDir),
+    targets: tgt,
+    // E-end is the last pivot; re-entering through E means pattern failed
+    invalidation: p[5].price,
+    guideline: fibCleanliness(sizes[1] / sizes[0], [1.236, 1.382]) * 0.5 +
+               fibCleanliness(sizes[2] / sizes[1], [1.236, 1.382]) * 0.5,
+    prior: 0.25,
+    anchorPivots: p,
+    waveLabels: ['0', 'A', 'B', 'C', 'D', 'E→'],
+    currentWave: 'Expanding triangle thrust',
+    rationale:
+      `5-wave expanding triangle (A<B<C<D<E, ${clearPairs} clear expansions). ` +
+      `Breakout ${breakoutDir > 0 ? 'up' : 'down'} (same as A) targeting 0.618–1.618× E from E.`,
+  });
+}
+
 // T7: Contracting triangle — 5 alternating waves (A-B-C-D-E), each shorter than the
 // previous. Common in Wave 4 or Wave B. After E, price breaks out and resumes the
 // prior trend. Requires 6 confirmed pivots.
@@ -319,6 +367,53 @@ function tContractingTriangle(c) {
   });
 }
 
+// T10: Double zigzag (W-X-Y) — two zigzag corrections linked by an X wave.
+// Overall bias follows W direction. Minimum 5 confirmed pivots.
+function tDoubleZigzag(c) {
+  if (c.length < 5) return null;
+  const p = c.slice(-5);
+  // W direction
+  const dirW = sign(p[1].price - p[0].price);
+  if (dirW === 0) return null;
+  const wLen = len(p[0], p[1]);
+  // X wave: retraces some of W but must not exceed W's start
+  const xLen = len(p[1], p[2]);
+  const xRet = xLen / wLen;
+  if (xRet >= 1.0) return null; // X exceeded W's start
+  if (xRet < 0.1) return null;  // X too tiny
+  // Y's first leg (Y-A) must go in same direction as W
+  const dirY = sign(p[3].price - p[2].price);
+  if (dirY !== dirW) return null;
+  const yALen = len(p[2], p[3]);
+  // Y's second leg (Y-B): partial retrace of Y-A
+  const yBLen = len(p[3], p[4]);
+  const yBRet = yBLen / yALen;
+  if (yBRet >= 1.0) return null; // Y-B exceeded Y-A start
+  if (yBRet < 0.1) return null;  // Y-B too tiny
+  // Y-C targets: 1.0× and 1.618× of Y-A from Y-B end (p[4])
+  const tgt = [1.0, 1.618].map((r) => ({
+    label: `Y-C ${r}×`, ratio: r, price: p[4].price + dirW * yALen * r,
+  }));
+  return scenario({
+    id: 'double-zigzag',
+    name: 'Double zigzag W-X-Y',
+    pattern: 'correction',
+    bias: biasOf(dirW),
+    targets: tgt,
+    // If price breaks back through X's end, Y hasn't formed
+    invalidation: p[2].price,
+    guideline: fibCleanliness(xRet, [0.5, 0.618]) * 0.5 +
+               fibCleanliness(yBRet, [0.5, 0.618]) * 0.5,
+    prior: 0.3,
+    anchorPivots: p,
+    waveLabels: ['W₀', 'W', 'X', 'Y-A', 'Y-B'],
+    currentWave: 'Y-C (double zigzag)',
+    rationale:
+      `W-X-Y double zigzag: W moved ${dirW > 0 ? 'up' : 'down'}, X retraced ${(xRet * 100).toFixed(0)}% of W, ` +
+      `Y underway (Y-B: ${(yBRet * 100).toFixed(0)}% of Y-A). Y-C targets 1.0–1.618× Y-A.`,
+  });
+}
+
 // T8: low-confidence baseline — trend simply continues the last leg.
 function tContinuation(c, live) {
   if (c.length < 2) return null;
@@ -345,7 +440,7 @@ function tContinuation(c, live) {
   });
 }
 
-const TEMPLATES = [tImpulseComplete, tWave3, tWave5, tZigzagC, tFlat, tRunningFlat, tContractingTriangle, tContinuation];
+const TEMPLATES = [tImpulseComplete, tWave3, tWave5, tZigzagC, tFlat, tRunningFlat, tExpandingTriangle, tContractingTriangle, tDoubleZigzag, tContinuation];
 
 /**
  * Run every template against the pivot sequence and return raw scenarios.

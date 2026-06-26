@@ -109,3 +109,50 @@ test('analyze: tFlat exceedsStart correctly classifies expanded vs regular', () 
   const regFlat = analyze(pReg).scenarios.find((x) => x.id === 'flat-regular');
   assert.ok(regFlat, 'regular flat should fire when B stays below A start');
 });
+
+test('analyze: expanding triangle fires with UP breakout (same direction as A)', () => {
+  // legs: +40, -38, +55, -52, +70 — alternates, all within 90% buffer, 2 clear expansions
+  // i=1: 38 >= 40*0.9=36 ✓; i=2: 55 >= 38*0.9=34.2 ✓; i=3: 52 >= 55*0.9=49.5 ✓; i=4: 70 >= 52*0.9=46.8 ✓
+  // clearPairs (s > prev*1.1): i=2: 55>41.8 ✓, i=4: 70>57.2 ✓ → clearPairs=2 ✓
+  // p: 100L, 140H, 102L, 157H, 105L, 175H
+  const p = [
+    piv(100, 'L'), piv(140, 'H'), piv(102, 'L'),
+    piv(157, 'H'), piv(105, 'L'), piv(175, 'H'),
+  ];
+  const { scenarios } = analyze(p);
+  const s = scenarios.find((x) => x.id === 'expanding-triangle');
+  assert.ok(s, 'expanding-triangle should fire');
+  assert.equal(s.bias, 'up');
+  // Target at 1.0× E (70 pts) from p[5]=175: 175+70=245
+  assert.ok(Math.abs(s.targets[1].price - 245) < 0.5);
+});
+
+test('analyze: expanding triangle does NOT fire when a wave contracts >10%', () => {
+  // sizes [50, 30, 65, 45, 70]: sizes[1]=30 < sizes[0]*0.9=45 → rejected
+  const p = [
+    piv(100, 'L'), piv(150, 'H'), piv(120, 'L'),
+    piv(185, 'H'), piv(140, 'L'), piv(210, 'H'),
+  ];
+  const { scenarios } = analyze(p);
+  const s = scenarios.find((x) => x.id === 'expanding-triangle');
+  assert.equal(s, undefined, 'expanding-triangle should NOT fire');
+});
+
+test('analyze: double zigzag fires on W-X-Y structure', () => {
+  // W: 100→160 (UP, +60), X: 160→135 (retrace 25/60≈41.7%), Y-A: 135→180 (UP, +45), Y-B: 180→158 (retrace 22/45≈48.9%)
+  const p = [piv(100, 'L'), piv(160, 'H'), piv(135, 'L'), piv(180, 'H'), piv(158, 'L')];
+  const { scenarios } = analyze(p);
+  const s = scenarios.find((x) => x.id === 'double-zigzag');
+  assert.ok(s, 'double-zigzag should fire');
+  assert.equal(s.bias, 'up'); // W went up, so Y-C goes up
+  // Y-C at 1.0× Y-A (45) from Y-B end (158): 158+45=203
+  assert.ok(Math.abs(s.targets[0].price - 203) < 0.5);
+});
+
+test('analyze: double zigzag does NOT fire when X exceeds W start', () => {
+  // W: 100→160 (+60), X: 160→90 (below W start of 100) → xRet=70/60≈1.167 ≥ 1.0 → reject
+  const p = [piv(100, 'L'), piv(160, 'H'), piv(90, 'L'), piv(150, 'H'), piv(125, 'L')];
+  const { scenarios } = analyze(p);
+  const s = scenarios.find((x) => x.id === 'double-zigzag');
+  assert.equal(s, undefined, 'double-zigzag should NOT fire when X exceeds W start');
+});
