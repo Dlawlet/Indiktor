@@ -99,21 +99,29 @@ test('analyze: contracting triangle fires on 5 alternating shrinking waves', () 
   assert.ok(Math.abs(s.targets[1].price - 212) < 0.5);
 });
 
-test('analyze: flat types are mutually exclusive — regular flat vs running flat', () => {
-  // DOWN A: 200→150, then B goes UP to 210 (above A origin 200) → running flat (continuity flag)
-  // tFlat must NOT fire (flat-expanded is removed); tRunningFlat fires instead.
-  const pRun = [piv(200, 'H'), piv(150, 'L'), piv(210, 'H')];
-  const runFlat = analyze(pRun).scenarios.find((x) => x.id === 'running-flat');
-  assert.ok(runFlat, 'running-flat should fire when B exceeds A origin');
-  const noExpanded = analyze(pRun).scenarios.find((x) => x.id === 'flat-expanded');
-  assert.equal(noExpanded, undefined, 'flat-expanded is no longer a valid scenario type');
+test('analyze: complete flat family — all 4 variants mutually exclusive on correct data', () => {
+  // Running flat: B exceeds A's origin (210 > 200) → running-flat + flat-expanding both fire
+  // (they share the same A-B detection but project different C targets)
+  const pRun = [piv(200, 'H'), piv(150, 'L'), piv(210, 'H')]; // bRet=60/50=1.2
+  const sc  = analyze(pRun).scenarios;
+  assert.ok(sc.find((x) => x.id === 'running-flat'),    'running-flat fires when B > A-origin');
+  assert.ok(sc.find((x) => x.id === 'flat-expanding'),  'flat-expanding fires when B > A-origin (deeper C projection)');
+  assert.equal(sc.find((x) => x.id === 'flat-regular'),    undefined, 'flat-regular must NOT fire when B > A-origin');
+  assert.equal(sc.find((x) => x.id === 'flat-contracting'), undefined, 'flat-contracting must NOT fire when B > A-origin');
 
-  // Regular: B goes only to 195 (below A origin 200), bRet=45/50=0.90 → regular flat (correction flag)
-  const pReg = [piv(200, 'H'), piv(150, 'L'), piv(195, 'H')];
-  const regFlat = analyze(pReg).scenarios.find((x) => x.id === 'flat-regular');
-  assert.ok(regFlat, 'flat-regular should fire when B stays within A range');
-  const noRunning = analyze(pReg).scenarios.find((x) => x.id === 'running-flat');
-  assert.equal(noRunning, undefined, 'running-flat should NOT fire when B stays within A range');
+  // Regular flat: B retraces 90% of A, stays within A's range
+  const pReg = [piv(200, 'H'), piv(150, 'L'), piv(195, 'H')]; // bRet=45/50=0.90
+  const sc2  = analyze(pReg).scenarios;
+  assert.ok(sc2.find((x) => x.id === 'flat-regular'),    'flat-regular fires when B within A range');
+  assert.equal(sc2.find((x) => x.id === 'running-flat'),    undefined, 'running-flat must NOT fire when B within A range');
+  assert.equal(sc2.find((x) => x.id === 'flat-expanding'),  undefined, 'flat-expanding must NOT fire when B within A range');
+
+  // Contracting flat: B retraces only 40% of A (very small)
+  const pCon = [piv(200, 'H'), piv(150, 'L'), piv(170, 'H')]; // bRet=20/50=0.40
+  const sc3  = analyze(pCon).scenarios;
+  assert.ok(sc3.find((x) => x.id === 'flat-contracting'), 'flat-contracting fires when B very small');
+  assert.equal(sc3.find((x) => x.id === 'running-flat'),    undefined, 'running-flat must NOT fire on contracting');
+  assert.equal(sc3.find((x) => x.id === 'flat-regular'),    undefined, 'flat-regular must NOT fire on contracting (bRet < 0.65)');
 });
 
 test('analyze: expanding triangle fires with UP breakout (same direction as A)', () => {

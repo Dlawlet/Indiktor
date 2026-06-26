@@ -137,50 +137,53 @@ export function createWaveChart(container, dark = true) {
       return;
     }
 
-    // --- Regular flat: horizontal box between A's two extremes ---
-    // B stayed within A's range — draw A-origin (upper bound of correction) and
-    // A-end/B-max (lower bound). After C breaks the A-end level, the prior trend resumes.
-    if (id === 'flat-regular') {
-      const p = anchorPivots; // [A-start, A-end/B-start, B-end]
+    // --- All flat family: draw the B-wave parallel channel (the "tunnel") ---
+    // The KEY visual of any flat is the parallel channel the candles travel through
+    // during the B wave. A "bullish tunnel" after a bearish A wave IS the regular
+    // flat's B wave. The tunnel's slope + width completely identifies the flat type:
+    //   regular flat  : B stays within A's range (mild slope, bounded by A's levels)
+    //   running flat  : B ran past A's origin (steeper slope, A-end visible as C floor)
+    //   expanding flat: same as running flat, but C also expected to break A-end
+    //   contracting flat: B is shorter than A (slight slope, compressing width)
+    if (id === 'flat-regular' || id === 'running-flat' || id === 'flat-expanding' || id === 'flat-contracting') {
+      const p = anchorPivots; // [A-start, A-end, B-end]
       if (p.length < 3) return;
-      [p[0].price, p[1].price].forEach((lvl, i) => {
-        priceLines.push(candles.createPriceLine({
-          price: lvl, color: T.zig + '55', lineWidth: 1,
-          lineStyle: LC.LineStyle.Dotted, axisLabelVisible: false,
-          title: i === 0 ? 'A-orig' : 'A-end',
-        }));
-      });
-      return;
-    }
+      const bDuration = Math.max(1, p[2].time - p[1].time);
+      const slope     = (p[2].price - p[1].price) / bDuration;
+      // Channel base runs from A-end along B's direction.
+      // Channel parallel: shifted by (A-start - A-end) in price — the width of A.
+      const offset    = p[0].price - p[1].price; // width = A's price range
+      const baseAt    = (t) => p[1].price + slope * (t - p[1].time);
+      const paraAt    = (t) => baseAt(t) + offset;
+      // Extend forward by one B-wave duration to show where C should land.
+      const extTo     = p[2].time + bDuration;
 
-    // --- Running flat: diagonal "running" trendline + B-end level ---
-    // B broke PAST A's origin, showing the trend never really stopped.
-    // The diagonal line from A-end to B-end is the visual signature ("Running daily").
-    // C is expected to stay above A-end (short pullback before trend explosion).
-    if (id === 'running-flat') {
-      const p = anchorPivots; // [A-start, A-end/B-start, B-end]
-      if (p.length < 3) return;
-      // B-end horizontal: the new territory B reached (trend continuation high/low)
-      priceLines.push(candles.createPriceLine({
-        price: p[2].price, color: T.zig + '55', lineWidth: 1,
-        lineStyle: LC.LineStyle.Dotted, axisLabelVisible: false, title: 'B-ext',
-      }));
-      // A-end / C-target floor: C should not break below this
+      const addTunnel = (t1, v1, t2, v2, style, alpha) => {
+        const s = chart.addLineSeries({
+          color: T.zig + alpha, lineWidth: 1, lineStyle: style,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        });
+        s.setData([{ time: t1, value: v1 }, { time: t2, value: v2 }]);
+        projSeries.push(s);
+      };
+      // Draw the tunnel: solid base (lower/upper wall of B wave) + dashed parallel
+      addTunnel(p[1].time, baseAt(p[1].time), extTo, baseAt(extTo), LC.LineStyle.Solid,  '99');
+      addTunnel(p[1].time, paraAt(p[1].time), extTo, paraAt(extTo), LC.LineStyle.Dashed, '66');
+
+      // A-end key level: the boundary C must respect or break
       priceLines.push(candles.createPriceLine({
         price: p[1].price, color: T.zig + '44', lineWidth: 1,
-        lineStyle: LC.LineStyle.Dotted, axisLabelVisible: false, title: 'A-end',
+        lineStyle: LC.LineStyle.Dotted, axisLabelVisible: false,
+        title: id === 'flat-contracting' ? 'C-ceil' : 'A-end',
       }));
-      // Diagonal "running" trendline: A-end → B-end. This ascending (or descending)
-      // line shows the direction in which B ran past A's origin — the trend's pulse.
-      const runLine = chart.addLineSeries({
-        color: T.zig + '99', lineWidth: 1, lineStyle: LC.LineStyle.Solid,
-        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
-      });
-      runLine.setData([
-        { time: p[1].time, value: p[1].price },
-        { time: p[2].time, value: p[2].price },
-      ]);
-      projSeries.push(runLine);
+
+      // For running/expanding: also show A-origin (the level B already broke, now key resistance)
+      if (id === 'running-flat' || id === 'flat-expanding') {
+        priceLines.push(candles.createPriceLine({
+          price: p[0].price, color: T.zig + '33', lineWidth: 1,
+          lineStyle: LC.LineStyle.Dotted, axisLabelVisible: false, title: 'A-orig',
+        }));
+      }
       return;
     }
 

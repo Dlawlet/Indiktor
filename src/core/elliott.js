@@ -445,7 +445,87 @@ function tContinuation(c, live) {
   });
 }
 
-const TEMPLATES = [tImpulseComplete, tWave3, tWave5, tZigzagC, tFlat, tRunningFlat, tExpandingTriangle, tContractingTriangle, tDoubleZigzag, tContinuation];
+// T6b: Expanding flat — B runs past A's origin (same as running flat) BUT C also breaks
+// A's endpoint, so the whole correction "expands" beyond A in both directions.
+// This is what the analyst identifies when a running flat is "invalidated" by C going deeper:
+// "il n'y a plus de running, je me retrouve avec un expanding."
+// Prior is lower than running flat — it means the correction is stronger than expected.
+// Both running-flat and flat-expanding fire when B exceeds A's origin; the difference is
+// in the projected C target: running-flat C falls short, flat-expanding C breaks through.
+function tExpandingFlat(c) {
+  if (c.length < 3) return null;
+  const p = c.slice(-3);
+  const dirA = sign(p[1].price - p[0].price);
+  if (dirA === 0) return null;
+  const aLen = len(p[0], p[1]);
+  const bLen = len(p[1], p[2]);
+  const bRet = bLen / aLen;
+  const bExceedsAStart = dirA > 0 ? p[2].price < p[0].price : p[2].price > p[0].price;
+  if (!bExceedsAStart || bRet > 3.0) return null;
+  // C expected to BREAK A's endpoint (1.0–1.618× A from B's end in A's direction).
+  // This puts C further than A's low/high, expanding the overall correction.
+  const tgt = [1.0, 1.272, 1.618].map((r) => ({
+    label: `${r}× A`, ratio: r,
+    price: p[2].price + dirA * aLen * r,
+  }));
+  return scenario({
+    id: 'flat-expanding',
+    name: 'Expanding flat wave C',
+    pattern: 'correction',
+    bias: biasOf(dirA),
+    targets: tgt,
+    invalidation: p[2].price,
+    guideline: fibCleanliness(bRet, [1.236, 1.382]) * 0.65,
+    prior: 0.20,
+    anchorPivots: p,
+    waveLabels: ['A', 'B', '→C'],
+    currentWave: 'Expanding flat C',
+    rationale:
+      `B ran ${(bRet * 100).toFixed(0)}% of A past A's origin → expanding flat. ` +
+      `Unlike running flat, C is expected to ALSO break A's endpoint — deeper correction before resumption.`,
+  });
+}
+
+// T6c: Contracting flat — B retraces only 25–64% of A (very small correction),
+// C also expected to stay SHORT of A's endpoint (0.5–0.786× A from B's end).
+// The structure "contracts" — each swing is smaller than the last.
+// Signal: volatility compression, market coiling, breakout pending.
+// Low prior; often appears just before impulsive moves.
+function tContractingFlat(c) {
+  if (c.length < 3) return null;
+  const p = c.slice(-3);
+  const dirA = sign(p[1].price - p[0].price);
+  if (dirA === 0) return null;
+  const aLen = len(p[0], p[1]);
+  const bRet = len(p[1], p[2]) / aLen;
+  // B very small relative to A — contracting, not a full retrace
+  if (bRet < 0.25 || bRet >= 0.65) return null;
+  const exceedsStart = dirA > 0 ? p[2].price < p[0].price : p[2].price > p[0].price;
+  if (exceedsStart) return null;
+  // C falls short of A's endpoint (compression continues)
+  const tgt = [0.5, 0.618, 0.786].map((r) => ({
+    label: `${r}× A`, ratio: r,
+    price: p[2].price + dirA * aLen * r,
+  }));
+  return scenario({
+    id: 'flat-contracting',
+    name: 'Contracting flat wave C',
+    pattern: 'correction',
+    bias: biasOf(dirA),
+    targets: tgt,
+    invalidation: p[2].price,
+    guideline: fibCleanliness(bRet, [0.382, 0.5]) * 0.7,
+    prior: 0.18,
+    anchorPivots: p,
+    waveLabels: ['A', 'B', '→C'],
+    currentWave: 'Contracting flat C',
+    rationale:
+      `B retraced only ${(bRet * 100).toFixed(0)}% of A → contracting flat (volatility compression). ` +
+      `C expected to stay short of A's endpoint (50–79% of A). Market coiling before breakout.`,
+  });
+}
+
+const TEMPLATES = [tImpulseComplete, tWave3, tWave5, tZigzagC, tFlat, tRunningFlat, tExpandingFlat, tContractingFlat, tExpandingTriangle, tContractingTriangle, tDoubleZigzag, tContinuation];
 
 /**
  * Run every template against the pivot sequence and return raw scenarios.
