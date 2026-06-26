@@ -1,0 +1,10 @@
+{
+  "name": "indiktor-wave",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Elliott Wave scenario projection for BTC/ETH (fractal, probability-ranked)",
+  "scripts": {
+    "test": "node --test"
+  }
+}
