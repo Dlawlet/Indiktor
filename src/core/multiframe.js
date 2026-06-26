@@ -42,8 +42,9 @@ export function alignTimeframes(byTf) {
   const dir = weightedNet >= 0 ? 'up' : 'down';
 
   // share of (weighted) timeframes that agree with the net direction
+  const netSign = weightedNet > 0 ? 1 : weightedNet < 0 ? -1 : 0;
   const agreeWeight = byTf
-    .filter((t) => t.lean.net !== 0 && Math.sign(t.lean.net) === Math.sign(weightedNet || 1))
+    .filter((t) => netSign !== 0 && Math.sign(t.lean.net) === netSign)
     .reduce((s, t) => s + t.weight, 0);
   const agreement = wsum ? agreeWeight / wsum : 0;
 

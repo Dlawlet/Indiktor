@@ -29,6 +29,19 @@
     .navlink:hover{border-color:var(--cyan)}
     main{display:grid;grid-template-columns:1fr 420px;gap:1rem;padding:1rem 1.6rem;max-width:1900px;margin:0 auto}
     @media(max-width:1100px){main{grid-template-columns:1fr}}
+    @media(max-width:640px){
+      header{flex-wrap:wrap;gap:.5rem;padding:.7rem 1rem}
+      .tag{display:none}
+      .header-right{flex-wrap:wrap;gap:.5rem;width:100%}
+      .price{font-size:1rem}
+      main{padding:.5rem;gap:.6rem}
+      #chart{height:340px}
+      #scenarios{max-height:none}
+      .lean-nums{display:none}
+      .tf-chips{flex-wrap:wrap;gap:.3rem}
+      .panel-title{font-size:.52rem;padding:.6rem .8rem}
+      .row .k{min-width:68px}
+    }
     .panel{background:var(--bg2);border:1px solid var(--border);border-radius:4px;overflow:hidden}
     .panel.span-all{grid-column:1/-1}
     .panel-title{font-family:'Orbitron',monospace;font-size:.6rem;letter-spacing:.2em;color:var(--amber);
@@ -69,7 +82,7 @@
     .card{cursor:pointer;transition:box-shadow .15s}
     .card:hover{box-shadow:0 0 6px var(--accent)}
     .card.selected{box-shadow:0 0 12px var(--accent);border-color:var(--accent)}
-    .wave-pos{display:flex;align-items:center;gap:.7rem;padding:.65rem 1rem;font-size:.7rem;
+    .wave-pos{align-items:center;gap:.7rem;padding:.65rem 1rem;font-size:.7rem;
       border-bottom:1px solid var(--border);display:none}
     .wave-pos-label{font-family:'Orbitron',monospace;font-weight:700;letter-spacing:.08em;flex:1}
     .wave-pos.up .wave-pos-label{color:var(--green)}

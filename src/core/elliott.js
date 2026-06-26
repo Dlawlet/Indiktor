@@ -219,7 +219,7 @@ function tFlat(c) {
     pattern: 'correction',
     bias: biasOf(dirA),
     targets: tgt,
-    invalidation: p[1].price,
+    invalidation: p[2].price, // if price breaks back beyond the B extreme, C hasn't started
     guideline: fibCleanliness(bRet, kind === 'expanded' ? [1.236, 1.382] : [0.9, 1.0]),
     prior: kind === 'expanded' ? 0.4 : 0.35,
     anchorPivots: p,
