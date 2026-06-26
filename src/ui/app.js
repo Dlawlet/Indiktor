@@ -109,8 +109,9 @@ function _drawExtras(r, scenario, idx) {
     const lastCandle = r.candles[r.candles.length - 1];
     const intervalSec = INTERVAL_SECONDS[activeTf] ?? 3600;
     const ghostData = projectGhostCandles({
+      scenario,
+      anchorPivots: scenario.anchorPivots,
       currentPrice: lastCandle.close,
-      targetPrice: scenario.targets[0].price,
       atr,
       lastTime: lastCandle.time,
       intervalSec,
