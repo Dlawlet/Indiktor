@@ -90,6 +90,25 @@ export function createWaveChart(container, dark = true) {
     };
     addLine(a.time, baseAt(a.time), end, baseAt(end), LC.LineStyle.Solid);
     addLine(a.time, paraAt(a.time), end, paraAt(end), LC.LineStyle.Dashed);
+
+    // Translucent band: fill from the upper trendline downward at low opacity.
+    // LW Charts v4 has no native band-between-two-lines primitive; filling from
+    // the upper line is the closest approximation — both visible trendlines still
+    // clearly delimit the zone so the fill reads as the channel interior.
+    const upperAt = offset >= 0 ? paraAt : baseAt;
+    const hex     = color.slice(0, 7); // strip any existing alpha suffix
+    const band = chart.addAreaSeries({
+      lineColor:    'transparent',
+      topColor:     hex + '28', // ~16% opacity at the trendline
+      bottomColor:  hex + '05', // fades to near-transparent below
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      lineWidth: 0,
+    });
+    band.setData([
+      { time: a.time, value: upperAt(a.time) },
+      { time: end,    value: upperAt(end) },
+    ]);
+    projSeries.push(band);
   }
 
   function drawPatternShapeImpl(scenario, anchorPivots) {

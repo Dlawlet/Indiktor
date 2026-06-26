@@ -92,6 +92,31 @@ export function zigzag(candles, opts = {}) {
   return pivots;
 }
 
+/**
+ * Structural fatigue score for a pivot sequence: 0 = fresh momentum, 1 = exhausted.
+ *
+ * Measures how the last leg's amplitude compares to the first of the recent `nLegs`
+ * swings. Progressively shorter swings signal that the current wave is losing thrust
+ * and is likely completing. Used to adjust scenario probabilities — completion patterns
+ * (flat-C, impulse-complete) get a boost when fatigue is high.
+ *
+ *   ratio < 1 → shrinking legs (fatigue rising)  → score > 0.5
+ *   ratio = 1 → equal legs (neutral)              → score = 0.5
+ *   ratio > 1 → expanding legs (fresh momentum)  → score < 0.5
+ */
+export function fatigue(pivots, nLegs = 4) {
+  if (pivots.length < 3) return 0.5;
+  const recent = pivots.slice(-(nLegs + 1));
+  const sizes  = [];
+  for (let i = 1; i < recent.length; i++) {
+    sizes.push(Math.abs(recent[i].price - recent[i - 1].price));
+  }
+  if (sizes.length < 2 || !sizes[0]) return 0.5;
+  const ratio = sizes[sizes.length - 1] / sizes[0];
+  // ratio=0.5 → score=1.0, ratio=1.0 → score=0.5, ratio=1.5 → score=0.0
+  return Math.max(0, Math.min(1, 1.5 - ratio));
+}
+
 /** Signed lengths of each leg between consecutive pivots (price terms). */
 export function legs(pivots) {
   const out = [];

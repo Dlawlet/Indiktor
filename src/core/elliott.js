@@ -262,7 +262,7 @@ function tRunningFlat(c) {
     targets: tgt,
     invalidation: p[2].price, // new B extreme means C hasn't started
     guideline: fibCleanliness(bRet, [1.236, 1.382]),
-    prior: 0.3, // less common than regular/expanded flat
+    prior: 0.42, // Wave Theory: running flat is the strongest continuation signal — B breaking A's origin signals extreme underlying momentum
     anchorPivots: p,
     waveLabels: ['A', 'B', '→C'],
     currentWave: 'Running flat C',

@@ -2,7 +2,7 @@
 // timeframe, then measure how well the timeframes agree. Cross-timeframe
 // alignment is itself one of the strongest confidence signals in Elliott work.
 
-import { zigzag, atr as computeAtr } from './zigzag.js';
+import { zigzag, atr as computeAtr, fatigue } from './zigzag.js';
 import { analyze } from './elliott.js';
 import { rankScenarios, directionalLean } from './scoring.js';
 import { enrichScenarios } from './targets.js';
@@ -131,12 +131,26 @@ export function runTimeframe(candles, { atrMult = 3, atrPeriod = 14 } = {}) {
     return mult === 1.0 ? s : { ...s, probability: s.probability * mult };
   });
 
+  // Structural fatigue: measure amplitude decay across the last 4 zigzag legs.
+  // Wave Theory calls this "structural fatigue" — progressively shorter swings
+  // mean momentum is fading and the current move is likely completing.
+  // Boost correction/completion scenarios when fatigue is high (legs shrinking);
+  // penalise them slightly when momentum is still expanding.
+  const fatigueScore = fatigue(pivots);
+  const fatigueAdjusted = touchScored.map((s) => {
+    const completing = s.pattern === 'correction' || s.id === 'impulse-complete';
+    // ±20% max adjustment centred on neutral fatigue (0.5)
+    const delta = (fatigueScore - 0.5) * 0.4;
+    const mult  = completing ? 1 + delta : 1 - delta * 0.5;
+    return mult === 1 ? s : { ...s, probability: s.probability * Math.max(0.6, mult) };
+  });
+
   // Re-normalise across the unified pool so probabilities are comparable, then
   // apply a quality gate: a scenario must reach ≥ 65% of the top scenario's
   // share of the combined pool. Anything below that is noise relative to the
   // dominant read, not a genuine alternative.
-  const totalP = touchScored.reduce((s, x) => s + x.probability, 0) || 1;
-  const renormed = touchScored.map((s) => ({ ...s, probability: s.probability / totalP }));
+  const totalP = fatigueAdjusted.reduce((s, x) => s + x.probability, 0) || 1;
+  const renormed = fatigueAdjusted.map((s) => ({ ...s, probability: s.probability / totalP }));
   const maxP = renormed.length ? renormed[0].probability : 0;
   const gated = renormed.filter((s) => s.probability >= maxP * 0.65);
 
