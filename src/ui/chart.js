@@ -7,6 +7,16 @@ const COLORS = {
   invalid: '#ff3058',
 };
 
+function buildMarkers(pivots, labelMap = new Map()) {
+  return pivots.map((p) => ({
+    time: p.time,
+    position: p.type === 'H' ? 'aboveBar' : 'belowBar',
+    color: p.type === 'H' ? COLORS.down : COLORS.up,
+    shape: p.type === 'H' ? 'arrowDown' : 'arrowUp',
+    text: labelMap.get(p.time) ?? (p.tentative ? '?' : ''),
+  }));
+}
+
 export function createWaveChart(container) {
   const LC = window.LightweightCharts;
   const chart = LC.createChart(container, {
@@ -31,6 +41,43 @@ export function createWaveChart(container) {
 
   let priceLines = [];
   let projSeries = [];
+  let _allPivots = [];
+
+  function clearOverlaysImpl() {
+    priceLines.forEach((pl) => candles.removePriceLine(pl));
+    priceLines = [];
+    projSeries.forEach((s) => chart.removeSeries(s));
+    projSeries = [];
+  }
+
+  function setWaveLabelsImpl(anchorPivots, waveLabels) {
+    const labelMap = new Map(anchorPivots.map((p, i) => [p.time, waveLabels[i]]));
+    candles.setMarkers(buildMarkers(_allPivots, labelMap));
+  }
+
+  // Draw the Elliott channel for the scenario's anchor pivots.
+  // Uses the last 3 anchors: base line through a→c, parallel through b.
+  function drawChannelImpl(anchorPivots, color) {
+    if (anchorPivots.length < 3) return;
+    const [a, b, c] = anchorPivots.slice(-3);
+    if (c.time <= a.time) return;
+
+    const slope = (c.price - a.price) / (c.time - a.time);
+    const paraAtA = b.price - slope * (b.time - a.time);
+    const paraAtC = b.price + slope * (c.time - b.time);
+
+    const addDiag = (v1, v2, style) => {
+      const s = chart.addLineSeries({
+        color, lineWidth: 1, lineStyle: style,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      });
+      s.setData([{ time: a.time, value: v1 }, { time: c.time, value: v2 }]);
+      projSeries.push(s);
+    };
+
+    addDiag(a.price, c.price, LC.LineStyle.Solid);
+    addDiag(paraAtA, paraAtC, LC.LineStyle.Dashed);
+  }
 
   return {
     chart,
@@ -39,30 +86,24 @@ export function createWaveChart(container) {
     setCandles(data) { candles.setData(data); },
 
     setZigzag(pivots) {
+      _allPivots = pivots;
       zig.setData(pivots.map((p) => ({ time: p.time, value: p.price })));
-      candles.setMarkers(pivots.map((p) => ({
-        time: p.time,
-        position: p.type === 'H' ? 'aboveBar' : 'belowBar',
-        color: p.type === 'H' ? COLORS.down : COLORS.up,
-        shape: p.type === 'H' ? 'arrowDown' : 'arrowUp',
-        text: p.tentative ? '?' : '',
-      })));
+      candles.setMarkers(buildMarkers(pivots));
     },
 
-    clearOverlays() {
-      priceLines.forEach((pl) => candles.removePriceLine(pl));
-      priceLines = [];
-      projSeries.forEach((s) => chart.removeSeries(s));
-      projSeries = [];
+    clearOverlays: clearOverlaysImpl,
+
+    clearWaveLabels() {
+      candles.setMarkers(buildMarkers(_allPivots));
     },
 
-    // Draw a scenario's target zone + invalidation as labelled price lines.
+    // Default multi-scenario view: draw top N scenarios as dotted price lines.
     drawScenario(s, idx) {
       const color = this.scenarioColor(idx);
       s.targets.forEach((t, i) => {
         priceLines.push(candles.createPriceLine({
           price: t.price, color, lineWidth: 1,
-          lineStyle: window.LightweightCharts.LineStyle.Dotted,
+          lineStyle: LC.LineStyle.Dotted,
           axisLabelVisible: i === 0,
           title: i === 0 ? `S${idx + 1} ${t.label}` : '',
         }));
@@ -70,10 +111,52 @@ export function createWaveChart(container) {
       if (Number.isFinite(s.invalidation)) {
         priceLines.push(candles.createPriceLine({
           price: s.invalidation, color: COLORS.invalid, lineWidth: 1,
-          lineStyle: window.LightweightCharts.LineStyle.Dashed,
+          lineStyle: LC.LineStyle.Dashed,
           axisLabelVisible: false, title: `S${idx + 1} inval`,
         }));
       }
+    },
+
+    // Expanded single-scenario view: channel + labeled pivots + prominent levels.
+    highlightScenario(s, idx) {
+      clearOverlaysImpl();
+      const color = this.scenarioColor(idx);
+
+      // Draw targets prominently with price in the label
+      s.targets.forEach((t) => {
+        priceLines.push(candles.createPriceLine({
+          price: t.price, color, lineWidth: 2,
+          lineStyle: LC.LineStyle.Dotted,
+          axisLabelVisible: true,
+          title: `${t.label}  $${Math.round(t.price).toLocaleString()}`,
+        }));
+      });
+
+      // TP confluence zone (from enrichment)
+      if (s.tp?.price && s.tp.price !== s.targets[0]?.price) {
+        priceLines.push(candles.createPriceLine({
+          price: s.tp.price, color, lineWidth: 3,
+          lineStyle: LC.LineStyle.Solid,
+          axisLabelVisible: true,
+          title: `TP  $${Math.round(s.tp.price).toLocaleString()}`,
+        }));
+      }
+
+      // Invalidation
+      if (Number.isFinite(s.invalidation)) {
+        priceLines.push(candles.createPriceLine({
+          price: s.invalidation, color: COLORS.invalid, lineWidth: 2,
+          lineStyle: LC.LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: `✕ inval  $${Math.round(s.invalidation).toLocaleString()}`,
+        }));
+      }
+
+      // Elliott channel (the "tunnel")
+      if (s.anchorPivots) drawChannelImpl(s.anchorPivots, color + '88');
+
+      // Wave labels on pivot markers
+      if (s.anchorPivots && s.waveLabels) setWaveLabelsImpl(s.anchorPivots, s.waveLabels);
     },
 
     fit() { chart.timeScale().fitContent(); },

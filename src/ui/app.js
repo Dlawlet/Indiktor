@@ -18,9 +18,10 @@ const leanClass = (label) => (label === 'bullish' ? 'up' : label === 'bearish' ?
 let waveChart;
 let results = {};      // tfId -> { tf, candles, pivots, ranked, lean, price }
 let activeTf = '1d';
+let selectedIdx = null;
 
 async function run() {
-  const sensitivity = +el('sensitivity').value; // ATR multiplier, applied to all TFs
+  const sensitivity = +el('sensitivity').value;
   setStatus('Fetching candles across all timeframes…');
 
   let datasets;
@@ -42,6 +43,7 @@ async function run() {
 
   el('price').textContent = `$${fmt(results['1d'].price)}`;
   renderAlignment(alignment);
+  selectedIdx = null;
   renderTabs();
   renderActive();
   setStatus(`updated ${new Date().toLocaleTimeString()} · ${SYMBOL}`);
@@ -68,7 +70,12 @@ function renderTabs() {
   wrap.innerHTML = TIMEFRAMES.map((tf) =>
     `<button class="tab ${tf.id === activeTf ? 'active' : ''}" data-tf="${tf.id}">${tf.id}</button>`).join('');
   wrap.querySelectorAll('.tab').forEach((b) =>
-    b.addEventListener('click', () => { activeTf = b.dataset.tf; renderTabs(); renderActive(); }));
+    b.addEventListener('click', () => {
+      activeTf = b.dataset.tf;
+      selectedIdx = null;
+      renderTabs();
+      renderActive();
+    }));
 }
 
 function renderActive() {
@@ -78,10 +85,12 @@ function renderActive() {
   waveChart.setCandles(r.candles);
   waveChart.setZigzag(r.pivots);
   waveChart.clearOverlays();
+  waveChart.clearWaveLabels();
   r.ranked.slice(0, 3).forEach((s, i) => waveChart.drawScenario(s, i));
   waveChart.fit();
   renderLean(r.lean);
   renderScenarios(r.ranked);
+  renderWavePosition(null);
 }
 
 function renderLean(lean) {
@@ -91,6 +100,22 @@ function renderLean(lean) {
     `<span class="lean-label">${lean.label.toUpperCase()}</span>` +
     `<span class="lean-bar"><i style="width:${(lean.up * 100).toFixed(0)}%"></i></span>` +
     `<span class="lean-nums">▲ ${(lean.up * 100).toFixed(0)}% / ▼ ${(lean.down * 100).toFixed(0)}%</span>`;
+}
+
+function renderWavePosition(scenario) {
+  const node = el('wave-position');
+  if (!scenario) {
+    node.style.display = 'none';
+    return;
+  }
+  const cls = scenario.bias === 'up' ? 'up' : 'down';
+  const arrow = scenario.bias === 'up' ? '▲' : '▼';
+  node.style.display = 'flex';
+  node.className = `wave-pos ${cls}`;
+  node.innerHTML =
+    `<span class="wave-pos-label">📍 ${scenario.currentWave ?? scenario.name}</span>` +
+    `<span class="wave-pos-bias ${cls}">${arrow} ${scenario.bias.toUpperCase()}</span>` +
+    `<span class="wave-pos-hint">click again to reset</span>`;
 }
 
 function renderScenarios(ranked) {
@@ -106,8 +131,9 @@ function renderScenarios(ranked) {
     const rr = s.rr != null
       ? `<span class="rr ${s.rr >= 2 ? 'good' : s.rr >= 1 ? 'ok' : 'bad'}">${s.rr.toFixed(1)} : 1</span>`
       : '—';
+    const isSelected = selectedIdx === i;
     return `
-      <div class="card" style="--accent:${color}">
+      <div class="card${isSelected ? ' selected' : ''}" style="--accent:${color}" data-idx="${i}">
         <div class="card-head">
           <span class="rank">S${i + 1}</span>
           <span class="name">${s.name}</span>
@@ -122,10 +148,31 @@ function renderScenarios(ranked) {
         <div class="rationale">${s.rationale}</div>
       </div>`;
   }).join('');
+
+  // Card click: highlight the scenario on the chart, or deselect if same card.
+  wrap.querySelectorAll('.card').forEach((card) => {
+    card.addEventListener('click', () => {
+      const r = results[activeTf];
+      const idx = +card.dataset.idx;
+      if (selectedIdx === idx) {
+        // Deselect: restore default 3-scenario view
+        selectedIdx = null;
+        waveChart.clearOverlays();
+        waveChart.clearWaveLabels();
+        r.ranked.slice(0, 3).forEach((s, i) => waveChart.drawScenario(s, i));
+        renderWavePosition(null);
+        wrap.querySelectorAll('.card').forEach((c) => c.classList.remove('selected'));
+      } else {
+        selectedIdx = idx;
+        waveChart.highlightScenario(r.ranked[idx], idx);
+        renderWavePosition(r.ranked[idx]);
+        wrap.querySelectorAll('.card').forEach((c, i) =>
+          c.classList.toggle('selected', i === idx));
+      }
+    });
+  });
 }
 
-// Snapshot the ACTIVE timeframe's scenarios so the outcome can be reviewed later.
-// On demand (button) rather than every refresh, to avoid flooding the dataset.
 async function snapshotActive() {
   const r = results[activeTf];
   if (!r) return;

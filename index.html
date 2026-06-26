@@ -66,6 +66,17 @@
     .rr{font-weight:600} .rr.good{color:var(--green)} .rr.ok{color:var(--amber)} .rr.bad{color:var(--red)}
     .rationale{font-size:.66rem;color:var(--dim);margin-top:.55rem;line-height:1.45}
     .muted{color:var(--dim)}
+    .card{cursor:pointer;transition:box-shadow .15s}
+    .card:hover{box-shadow:0 0 6px var(--accent)}
+    .card.selected{box-shadow:0 0 12px var(--accent);border-color:var(--accent)}
+    .wave-pos{display:flex;align-items:center;gap:.7rem;padding:.65rem 1rem;font-size:.7rem;
+      border-bottom:1px solid var(--border);display:none}
+    .wave-pos-label{font-family:'Orbitron',monospace;font-weight:700;letter-spacing:.08em;flex:1}
+    .wave-pos.up .wave-pos-label{color:var(--green)}
+    .wave-pos.down .wave-pos-label{color:var(--red)}
+    .wave-pos-bias{font-size:.6rem;letter-spacing:.1em}
+    .wave-pos-bias.up{color:var(--green)} .wave-pos-bias.down{color:var(--red)}
+    .wave-pos-hint{font-size:.55rem;color:var(--dim)}
     footer{padding:.8rem 1.6rem;font-size:.6rem;color:var(--dim);border-top:1px solid var(--border);line-height:1.6}
     #status{font-size:.62rem;color:var(--dim);padding:.4rem 1.6rem}
     #status.error{color:var(--red)}
@@ -109,6 +120,7 @@
       </div>
       <div class="panel">
         <div class="panel-title">SCENARIOS — ranked by model confidence</div>
+        <div id="wave-position" class="wave-pos" style="display:none"></div>
         <div id="scenarios"></div>
       </div>
     </div>

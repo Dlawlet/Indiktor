@@ -106,9 +106,12 @@ function tImpulseComplete(c) {
     pattern: 'correction',
     bias: biasOf(-dir),
     targets: tgt,
-    invalidation: p[5].price, // a new extreme beyond wave 5 = still impulsing
+    invalidation: p[5].price,
     guideline: g,
     prior: 0.6,
+    anchorPivots: p,
+    waveLabels: ['0', '1', '2', '3', '4', '5'],
+    currentWave: 'A-B-C correction',
     rationale:
       `5-wave ${dir > 0 ? 'up' : 'down'} impulse looks complete (rules 1–3 pass). ` +
       `Expect an A-B-C correction retracing 38–62% of the move.`,
@@ -132,9 +135,12 @@ function tWave3(c) {
     pattern: 'impulse',
     bias: biasOf(dir),
     targets: tgt,
-    invalidation: p[0].price, // wave 2 can't pass the start of wave 1
+    invalidation: p[0].price,
     guideline: fibCleanliness(w2ret, IDEAL.wave2),
     prior: 0.65,
+    anchorPivots: p,
+    waveLabels: ['0', '1', '2'],
+    currentWave: 'Wave 3 target',
     rationale:
       `Reading the last two legs as waves 1–2 (wave 2 retraced ${(w2ret * 100).toFixed(0)}%). ` +
       `Wave 3 typically extends 1.618–2.618× wave 1.`,
@@ -156,9 +162,12 @@ function tWave5(c) {
     pattern: 'impulse',
     bias: biasOf(dir),
     targets: tgt,
-    invalidation: p[4].price, // losing the wave-4 extreme breaks this count
+    invalidation: p[4].price,
     guideline: 0.55,
     prior: 0.5,
+    anchorPivots: p,
+    waveLabels: ['0', '1', '2', '3', '4'],
+    currentWave: 'Wave 5 target',
     rationale:
       `Waves 1–4 in place (no wave-1/4 overlap). Wave 5 commonly equals wave 1 ` +
       `(0.618–1.618×) measured from the wave-4 ${dir > 0 ? 'low' : 'high'}.`,
@@ -183,6 +192,9 @@ function tZigzagC(c) {
     invalidation: p[0].price,
     guideline: fibCleanliness(bRet, [0.5, 0.618, 0.786]),
     prior: 0.45,
+    anchorPivots: p,
+    waveLabels: ['A', 'B', '→C'],
+    currentWave: 'Zigzag wave C',
     rationale:
       `Last two legs read as A-B of a zigzag (B retraced ${(bRet * 100).toFixed(0)}% of A). ` +
       `Wave C usually travels 1.0–1.618× wave A.`,
@@ -207,9 +219,12 @@ function tFlat(c) {
     pattern: 'correction',
     bias: biasOf(dirA),
     targets: tgt,
-    invalidation: p[1].price, // C in a flat shouldn't break back past the B extreme early
+    invalidation: p[1].price,
     guideline: fibCleanliness(bRet, kind === 'expanded' ? [1.236, 1.382] : [0.9, 1.0]),
     prior: kind === 'expanded' ? 0.4 : 0.35,
+    anchorPivots: p,
+    waveLabels: ['A', 'B', '→C'],
+    currentWave: `${kind[0].toUpperCase()}${kind.slice(1)} flat C`,
     rationale:
       `B retraced ${(bRet * 100).toFixed(0)}% of A → ${kind} flat (3-3-5). ` +
       `Wave C ${kind === 'expanded' ? 'overshoots A' : 'roughly equals A'}.`,
@@ -219,13 +234,12 @@ function tFlat(c) {
 // T6: low-confidence baseline — trend simply continues the last leg.
 function tContinuation(c, live) {
   if (c.length < 2) return null;
-  const last = c[c.length - 1];
-  const prev = c[c.length - 2];
-  const dir = sign(last.price - prev.price);
+  const p = c.slice(-2);
+  const dir = sign(p[1].price - p[0].price);
   if (dir === 0) return null;
-  const swing = len(prev, last);
+  const swing = len(p[0], p[1]);
   const tgt = [0.618, 1.0].map((r) => ({
-    label: `${r}x swing`, ratio: r, price: last.price + dir * swing * r,
+    label: `${r}x swing`, ratio: r, price: p[1].price + dir * swing * r,
   }));
   return scenario({
     id: 'continuation',
@@ -233,9 +247,12 @@ function tContinuation(c, live) {
     pattern: 'continuation',
     bias: biasOf(dir),
     targets: tgt,
-    invalidation: prev.price,
+    invalidation: p[0].price,
     guideline: 0.3,
     prior: 0.3,
+    anchorPivots: p,
+    waveLabels: ['prev', '→'],
+    currentWave: 'Trend continuation',
     rationale: 'Baseline: the most recent leg simply extends. Low-conviction fallback.',
   });
 }
