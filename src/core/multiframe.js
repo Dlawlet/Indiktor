@@ -49,7 +49,10 @@ export function runTimeframe(candles, { atrMult = 3, atrPeriod = 14 } = {}) {
     if (seenKeys.has(key)) return false;
     seenKeys.add(key);
     return true;
-  }).slice(0, 3);  // hard cap: more than 3 signals noise, not conviction
+  });
+  // No hard cap here. rankScenarios already filtered to scenarios scoring ≥ 40%
+  // of the best raw weight. If more than 3 survive that bar the data is genuinely
+  // ambiguous and tightening the EW templates is the right fix, not slicing the list.
 
   const ranked = enrichScenarios(deduped, { price, structuralLevels });
   const lean = directionalLean(ranked);

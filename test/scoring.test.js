@@ -21,10 +21,10 @@ test('rankScenarios produces probabilities summing to 1, sorted desc', () => {
   assert.equal(ranked[0].id, 'a'); // highest prior x guideline
 });
 
-test('a hard-rule failure collapses a scenario near zero', () => {
+test('a hard-rule failure removes the scenario from ranking entirely', () => {
   const ranked = rankScenarios(fakeAnalysis);
   const c = ranked.find((s) => s.id === 'c');
-  assert.ok(c.probability < 0.02);
+  assert.equal(c, undefined, 'rule-failed scenario is filtered out, not just collapsed');
 });
 
 test('invalidation distance is computed relative to live price', () => {
