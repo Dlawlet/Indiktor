@@ -99,15 +99,21 @@ test('analyze: contracting triangle fires on 5 alternating shrinking waves', () 
   assert.ok(Math.abs(s.targets[1].price - 212) < 0.5);
 });
 
-test('analyze: tFlat exceedsStart correctly classifies expanded vs regular', () => {
-  // DOWN A: 200→150, then B goes UP to 210 (above A start of 200) → expanded
-  const pExp = [piv(200, 'H'), piv(150, 'L'), piv(210, 'H')];
-  const expFlat = analyze(pExp).scenarios.find((x) => x.id === 'flat-expanded');
-  assert.ok(expFlat, 'expanded flat should fire when B exceeds A start');
-  // Regular: B goes only to 195 (below A start of 200)
-  const pReg = [piv(200, 'H'), piv(150, 'L'), piv(195, 'H')]; // bRet=(195-150)/50=0.9
+test('analyze: flat types are mutually exclusive — regular flat vs running flat', () => {
+  // DOWN A: 200→150, then B goes UP to 210 (above A origin 200) → running flat (continuity flag)
+  // tFlat must NOT fire (flat-expanded is removed); tRunningFlat fires instead.
+  const pRun = [piv(200, 'H'), piv(150, 'L'), piv(210, 'H')];
+  const runFlat = analyze(pRun).scenarios.find((x) => x.id === 'running-flat');
+  assert.ok(runFlat, 'running-flat should fire when B exceeds A origin');
+  const noExpanded = analyze(pRun).scenarios.find((x) => x.id === 'flat-expanded');
+  assert.equal(noExpanded, undefined, 'flat-expanded is no longer a valid scenario type');
+
+  // Regular: B goes only to 195 (below A origin 200), bRet=45/50=0.90 → regular flat (correction flag)
+  const pReg = [piv(200, 'H'), piv(150, 'L'), piv(195, 'H')];
   const regFlat = analyze(pReg).scenarios.find((x) => x.id === 'flat-regular');
-  assert.ok(regFlat, 'regular flat should fire when B stays below A start');
+  assert.ok(regFlat, 'flat-regular should fire when B stays within A range');
+  const noRunning = analyze(pReg).scenarios.find((x) => x.id === 'running-flat');
+  assert.equal(noRunning, undefined, 'running-flat should NOT fire when B stays within A range');
 });
 
 test('analyze: expanding triangle fires with UP breakout (same direction as A)', () => {

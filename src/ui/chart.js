@@ -137,21 +137,50 @@ export function createWaveChart(container, dark = true) {
       return;
     }
 
-    // --- Flats and running flat: draw A-level and B-level horizontal zones ---
-    if (id === 'flat-regular' || id === 'flat-expanded' || id === 'running-flat') {
-      const p = anchorPivots;  // [A-start, B-end, B/C-start]
+    // --- Regular flat: horizontal box between A's two extremes ---
+    // B stayed within A's range — draw A-origin (upper bound of correction) and
+    // A-end/B-max (lower bound). After C breaks the A-end level, the prior trend resumes.
+    if (id === 'flat-regular') {
+      const p = anchorPivots; // [A-start, A-end/B-start, B-end]
       if (p.length < 3) return;
-      // The two key structural levels are the A-start and B-extreme
       [p[0].price, p[1].price].forEach((lvl, i) => {
         priceLines.push(candles.createPriceLine({
-          price: lvl,
-          color: T.zig + '55',
-          lineWidth: 1,
-          lineStyle: LC.LineStyle.Dotted,
-          axisLabelVisible: false,
-          title: i === 0 ? 'A-lvl' : 'B-ext',
+          price: lvl, color: T.zig + '55', lineWidth: 1,
+          lineStyle: LC.LineStyle.Dotted, axisLabelVisible: false,
+          title: i === 0 ? 'A-orig' : 'A-end',
         }));
       });
+      return;
+    }
+
+    // --- Running flat: diagonal "running" trendline + B-end level ---
+    // B broke PAST A's origin, showing the trend never really stopped.
+    // The diagonal line from A-end to B-end is the visual signature ("Running daily").
+    // C is expected to stay above A-end (short pullback before trend explosion).
+    if (id === 'running-flat') {
+      const p = anchorPivots; // [A-start, A-end/B-start, B-end]
+      if (p.length < 3) return;
+      // B-end horizontal: the new territory B reached (trend continuation high/low)
+      priceLines.push(candles.createPriceLine({
+        price: p[2].price, color: T.zig + '55', lineWidth: 1,
+        lineStyle: LC.LineStyle.Dotted, axisLabelVisible: false, title: 'B-ext',
+      }));
+      // A-end / C-target floor: C should not break below this
+      priceLines.push(candles.createPriceLine({
+        price: p[1].price, color: T.zig + '44', lineWidth: 1,
+        lineStyle: LC.LineStyle.Dotted, axisLabelVisible: false, title: 'A-end',
+      }));
+      // Diagonal "running" trendline: A-end → B-end. This ascending (or descending)
+      // line shows the direction in which B ran past A's origin — the trend's pulse.
+      const runLine = chart.addLineSeries({
+        color: T.zig + '99', lineWidth: 1, lineStyle: LC.LineStyle.Solid,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      });
+      runLine.setData([
+        { time: p[1].time, value: p[1].price },
+        { time: p[2].time, value: p[2].price },
+      ]);
+      projSeries.push(runLine);
       return;
     }
 

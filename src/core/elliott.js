@@ -201,45 +201,47 @@ function tZigzagC(c) {
   });
 }
 
-// T5: last two legs = A-B of a flat -> classify regular / expanded / running.
+// T5: Regular flat — a CORRECTION flag.
+// B retraces 65-99% of A, staying between A's two extremes (B does NOT break A's origin).
+// C then breaks A's endpoint, completing the correction, after which the PRIOR TREND resumes.
+// Distinguished from running flat: in a regular flat the correction is genuine (the trend paused).
+// If B exceeds A's origin that is a running flat — handled exclusively by tRunningFlat.
 function tFlat(c) {
   if (c.length < 3) return null;
   const p = c.slice(-3);
   const dirA = sign(p[1].price - p[0].price);
   if (dirA === 0) return null;
   const bRet = len(p[1], p[2]) / len(p[0], p[1]);
-  // Wave Theory: B "peut atteindre ou ne pas atteindre les 80%" — the 80/90% floor
-  // in Elliott is not required. A flat B can retrace as little as ~65% of A.
-  // Upper cap at 1.5: if B > 1.5× A the structure is better described as impulse noise.
-  if (bRet < 0.65 || bRet > 1.5) return null;
-  // B exceeds A's start: for UP A, B's low (p[2]) went below A's starting low (p[0]);
-  // for DOWN A, B's high (p[2]) went above A's starting high (p[0]).
+  // Wave Theory: B can retrace as little as 65% of A — the Elliott 80% floor is not required.
+  // Upper bound < 1.0: if B reaches or exceeds A's origin, that is a running flat.
+  if (bRet < 0.65 || bRet >= 1.0) return null;
+  // Explicit guard: B must stay below A's starting price.
   const exceedsStart = dirA > 0 ? p[2].price < p[0].price : p[2].price > p[0].price;
-  const kind = bRet >= 1.05 || exceedsStart ? 'expanded' : 'regular';
-  const tgt = targets(kind === 'expanded' ? [1.272, 1.618] : IDEAL.flatC,
-    p[0].price, p[1].price, p[2].price);
+  if (exceedsStart) return null; // running flat territory — tRunningFlat handles it
+  const tgt = targets(IDEAL.flatC, p[0].price, p[1].price, p[2].price);
   return scenario({
-    id: `flat-${kind}`,
-    name: `${kind[0].toUpperCase()}${kind.slice(1)} flat wave C`,
+    id: 'flat-regular',
+    name: 'Regular flat — correction flag',
     pattern: 'correction',
     bias: biasOf(dirA),
     targets: tgt,
-    invalidation: p[2].price, // if price breaks back beyond the B extreme, C hasn't started
-    guideline: fibCleanliness(bRet, kind === 'expanded' ? [1.236, 1.382] : [0.9, 1.0]),
-    prior: kind === 'expanded' ? 0.4 : 0.35,
+    invalidation: p[2].price,
+    guideline: fibCleanliness(bRet, [0.764, 0.854]),
+    prior: 0.38,
     anchorPivots: p,
     waveLabels: ['A', 'B', '→C'],
-    currentWave: `${kind[0].toUpperCase()}${kind.slice(1)} flat C`,
+    currentWave: 'Regular flat C',
     rationale:
-      `B retraced ${(bRet * 100).toFixed(0)}% of A → ${kind} flat (3-3-5). ` +
-      `Wave C ${kind === 'expanded' ? 'overshoots A' : 'roughly equals A'}.`,
+      `B retraced ${(bRet * 100).toFixed(0)}% of A → regular flat (3-3-5 correction flag). ` +
+      `C expected to break A's extreme; prior trend resumes once C completes.`,
   });
 }
 
-// T6: Running flat — B retraces > 100% of A (exceeds A's starting point), but C is
-// expected to fall SHORT of A's endpoint. This signals a very strong underlying trend:
-// the correction failed to fully develop, indicating the primary trend will resume powerfully.
-// C targets 38–79% of B rather than 100%+ of A (contrast with expanded flat).
+// T6: Running flat — a CONTINUITY flag of the current direction.
+// B exceeds A's origin (runs to new territory in the trend direction) because the underlying
+// trend is so strong the correction barely developed. C is only a minor pullback that falls
+// SHORT of A's endpoint, then the trend RESUMES explosively.
+// Mutually exclusive with tFlat: tFlat fires only when B stays within A's range.
 function tRunningFlat(c) {
   if (c.length < 3) return null;
   const p = c.slice(-3);
@@ -270,8 +272,8 @@ function tRunningFlat(c) {
     waveLabels: ['A', 'B', '→C'],
     currentWave: 'Running flat C',
     rationale:
-      `B retraced ${(bRet * 100).toFixed(0)}% of A and exceeded A's origin → running flat. ` +
-      `C expected at 38–79% of B (shorter than A), signalling a powerful underlying trend.`,
+      `B retraced ${(bRet * 100).toFixed(0)}% of A and broke A's origin → running flat (continuity flag). ` +
+      `The trend never stopped — C is a minor pullback (38–79% of B) before explosive resumption.`,
   });
 }
 
