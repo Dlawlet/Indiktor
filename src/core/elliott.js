@@ -299,15 +299,14 @@ function tContractingTriangle(c) {
     label: `${r}× A`, ratio: r,
     price: p[5].price + breakoutDir * aLen * r,
   }));
-  // Invalidation: D extreme — if broken by a new leg it's not a clean triangle
-  const dExtreme = p[4].price;
   return scenario({
     id: 'contracting-triangle',
     name: 'Contracting triangle → breakout',
     pattern: 'continuation',
     bias: biasOf(breakoutDir),
     targets: tgt,
-    invalidation: dExtreme,
+    // E-end is the last pivot; breaking back through it means the triangle is extending or failed
+    invalidation: p[5].price,
     guideline: fibCleanliness(sizes[1] / sizes[0], [0.618, 0.786]) * 0.5 +
                fibCleanliness(sizes[2] / sizes[1], [0.618, 0.786]) * 0.5,
     prior: 0.45,
