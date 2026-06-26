@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyFlatPattern } from '../src/core/scanner.js';
+import { classifyFlatPattern, scoreFlatCandidate } from '../src/core/scanner.js';
 
 const p = (price, type = 'L', time = 0) => ({ price, type, time });
 
@@ -73,4 +73,35 @@ test('classifyFlatPattern returns null for non-flat zone', () => {
   // bRet = 0.68 falls in intentional gray zone between contracting and regular
   const out = classifyFlatPattern(p(100), p(150), p(116));
   assert.equal(out, null);
+});
+
+test('scoreFlatCandidate rewards coherent pre/post trend context', () => {
+  const aStart = p(100, 'L', 10);
+  const aEnd = p(150, 'H', 20);
+  const bEnd = p(90, 'L', 30); // running flat candidate, dirA up
+  const classified = classifyFlatPattern(aStart, aEnd, bEnd);
+  assert.ok(classified);
+  assert.equal(classified.type, 'running');
+
+  const coherent = scoreFlatCandidate({
+    classified,
+    origin: p(60, 'L', 1),      // pre move up into A-start
+    aStart,
+    bEnd,
+    next: p(120, 'H', 40),      // post move up after B-end
+    spanCandles: 40,
+    minSpan: 20,
+  });
+
+  const incoherent = scoreFlatCandidate({
+    classified,
+    origin: p(130, 'H', 1),     // pre move down into A-start (wrong for running)
+    aStart,
+    bEnd,
+    next: p(80, 'L', 40),       // post move down after B-end (wrong)
+    spanCandles: 40,
+    minSpan: 20,
+  });
+
+  assert.ok(coherent > incoherent);
 });

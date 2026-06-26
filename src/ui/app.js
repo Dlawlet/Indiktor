@@ -346,7 +346,15 @@ function applyHistOverlay() {
     // minSpan=30: require A+B to span at least 30 candles — eliminates spike-to-spike
     // false detections while preserving true structural flat channels (30c = 30h on 1h,
     // 5 days on 4h, etc.)
-    const patterns = scanHistoricalFlats(r.candles, { atrMult: sensitivity, minSpan: 30 });
+    const patterns = scanHistoricalFlats(r.candles, {
+      atrMult: sensitivity,
+      minSpan: 24,
+      minConfidence: 0.68,
+      maxASpan: 10,
+      maxBSpan: 6,
+      maxOriginSpan: 8,
+      topPerBEnd: 2,
+    });
     waveChart.drawHistoricalFlats(patterns, r.candles);
     const byType = patterns.reduce((acc, p) => {
       acc[p.type] = (acc[p.type] ?? 0) + 1;
@@ -354,11 +362,14 @@ function applyHistOverlay() {
     }, {});
     const bull = patterns.filter((p) => p.market === 'bull').length;
     const bear = patterns.length - bull;
+    const avgConf = patterns.length
+      ? (patterns.reduce((s, p) => s + (p.confidence ?? 0), 0) / patterns.length)
+      : 0;
     setStatus(
       `Historical flags: ${patterns.length} · ` +
       `regular ${byType.regular ?? 0}, running ${byType.running ?? 0}, ` +
       `expanding ${byType.expanding ?? 0}, contracting ${byType.contracting ?? 0} · ` +
-      `bull ${bull} / bear ${bear}`
+      `bull ${bull} / bear ${bear} · avg conf ${(avgConf * 100).toFixed(0)}%`
     );
   } else {
     waveChart.clearHistoricalFlats();

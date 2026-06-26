@@ -407,8 +407,8 @@ export function createWaveChart(container, dark = true) {
         expanding: '#ff7744',
         contracting: '#5ccf7a',
       };
-      const ALPHA_LINE = '55';
-      const ALPHA_FILL = '0e';
+      const ALPHA_LINE = '88';
+      const ALPHA_FILL = '26';
       const seenLabels = new Set();
 
       for (const p of patterns) {
@@ -438,6 +438,25 @@ export function createWaveChart(container, dark = true) {
 
         addH(t1, hiAt(t1), t2, hiAt(t2), LC.LineStyle.Solid);   // upper wall
         addH(t1, loAt(t1), t2, loAt(t2), LC.LineStyle.Dashed);  // lower wall
+
+        // Explicit hatch inside the channel so the "between-lines" area is always visible,
+        // even on themes where AreaSeries gradients are too subtle.
+        const hatchCount = Math.max(8, Math.min(24, Math.round((t2 - t1) / 1800)));
+        const step = (t2 - t1) / (hatchCount + 1);
+        for (let i = 0; i < hatchCount; i++) {
+          const ta = Math.round(t1 + step * (i + 0.2));
+          const tb = Math.round(Math.min(t2, ta + step * 0.65));
+          if (tb <= ta) continue;
+          const hatch = chart.addLineSeries({
+            color: col + '20', lineWidth: 1, lineStyle: LC.LineStyle.Solid,
+            priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+          });
+          hatch.setData([
+            { time: ta, value: hiAt(ta) },
+            { time: tb, value: loAt(tb) },
+          ]);
+          histSeries.push(hatch);
+        }
 
         // Translucent fill from the upper wall downward
         const fill = chart.addAreaSeries({

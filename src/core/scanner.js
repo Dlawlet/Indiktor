@@ -11,6 +11,75 @@ const FLAT_NAMES = {
   contracting: 'Contracting Flat',
 };
 
+const sign = (x) => (x > 0 ? 1 : x < 0 ? -1 : 0);
+const clamp01 = (x) => Math.max(0, Math.min(1, x));
+
+const IDEAL_BRET = {
+  regular: 0.85,
+  contracting: 0.45,
+  running: 1.12,
+  expanding: 1.45,
+};
+
+const BRET_TOL = {
+  regular: 0.15,
+  contracting: 0.20,
+  running: 0.18,
+  expanding: 0.55,
+};
+
+/**
+ * Confidence score for a flat candidate using shape quality + context coherence.
+ *
+ * @param {object} args
+ * @param {object} args.classified  Output of classifyFlatPattern
+ * @param {object|null} args.origin Pivot before A-start (if available)
+ * @param {object} args.aStart      A-start pivot
+ * @param {object} args.bEnd        B-end pivot
+ * @param {object|null} args.next   Pivot after B-end (if available)
+ * @param {number} args.spanCandles A-start to B-end span in candles
+ * @param {number} args.minSpan     Minimum structural span used by scanner
+ * @returns {number} confidence in [0, 1]
+ */
+export function scoreFlatCandidate({
+  classified,
+  origin,
+  aStart,
+  bEnd,
+  next,
+  spanCandles,
+  minSpan,
+}) {
+  const { type, dirA, bRet } = classified;
+
+  const ratioIdeal = IDEAL_BRET[type] ?? 1.0;
+  const ratioTol = BRET_TOL[type] ?? 0.25;
+  const ratioScore = clamp01(1 - Math.abs(bRet - ratioIdeal) / ratioTol);
+
+  // Structure score saturates around 2x minSpan, but does not punish valid near-threshold waves too hard.
+  const structureScore = clamp01(spanCandles / (Math.max(1, minSpan) * 2));
+
+  const preDir = origin ? sign(aStart.price - origin.price) : 0;
+  const postDir = next ? sign(next.price - bEnd.price) : 0;
+
+  // Running/expanding prefer trend continuity into A; regular/contracting prefer corrective A.
+  const expectedPre = (type === 'running' || type === 'expanding') ? dirA : -dirA;
+  const preScore = origin ? (preDir === expectedPre ? 1 : 0.25) : 0.55;
+
+  // Flat-family expectation for C start after B: move in A's direction.
+  const postScore = next ? (postDir === dirA ? 1 : 0.2) : 0.6;
+
+  const typeWeight = {
+    regular: 0.92,
+    running: 0.95,
+    expanding: 0.84,
+    contracting: 0.82,
+  }[type] ?? 0.85;
+
+  const raw = (0.45 * ratioScore) + (0.20 * structureScore) + (0.20 * preScore) + (0.15 * postScore);
+  return +(clamp01(raw * typeWeight).toFixed(3));
+}
+
 /**
  * Classify a 3-pivot flat candidate into one of 4 flat-family variants.
  *
@@ -72,6 +141,11 @@ export function scanHistoricalFlats(candles, opts = {}) {
     atrPeriod  = 14,
     bRetMinReg = 0.70,
     minSpan    = 20,   // structural filter: A+B must span at least this many candles
+    minConfidence = 0.62,
+    maxASpan = 9,
+    maxBSpan = 5,
+    maxOriginSpan = 6,
+    topPerBEnd = 2,
   } = opts;
 
   // Time → index map for O(1) span lookup
@@ -83,29 +157,95 @@ export function scanHistoricalFlats(candles, opts = {}) {
     return candles.length - 1;
   };
 
-  const results = [];
-  const seen    = new Set();
+  const bestByKey = new Map();
 
   const pivots = zigzag(candles, { atrMult, atrPeriod });
   const conf   = pivots.filter(p => !p.tentative);
 
-  for (let i = 2; i < conf.length; i++) {
-    const [a, b, c] = [conf[i - 2], conf[i - 1], conf[i]];
-    const key = `${a.time}:${b.time}:${c.time}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+  for (let bEndIdx = 2; bEndIdx < conf.length; bEndIdx++) {
+    const bEnd = conf[bEndIdx];
+    const next = conf[bEndIdx + 1] ?? null;
 
-    // Structural filter: skip if the whole A+B pattern fits within too few candles.
-    // Consecutive zigzag spikes (noise) are typically 2-8 candles apart.
-    // Real structural waves span 20+ candles.
-    const spanCandles = nearestIdx(c.time) - nearestIdx(a.time);
-    if (spanCandles < minSpan) continue;
+    for (let bSpan = 1; bSpan <= maxBSpan; bSpan++) {
+      const aEndIdx = bEndIdx - bSpan;
+      if (aEndIdx < 1) break;
+      const aEnd = conf[aEndIdx];
+      if (aEnd.type === bEnd.type) continue;
 
-    const classified = classifyFlatPattern(a, b, c);
-    if (!classified) continue;
-    if (classified.type === 'regular' && classified.bRet < bRetMinReg) continue;
-    results.push({ ...classified, aStart: a, aEnd: b, bEnd: c });
+      for (let aSpan = 1; aSpan <= maxASpan; aSpan++) {
+        const aStartIdx = aEndIdx - aSpan;
+        if (aStartIdx < 0) break;
+        const aStart = conf[aStartIdx];
+        if (aStart.type !== bEnd.type) continue;
+
+        const spanCandles = nearestIdx(bEnd.time) - nearestIdx(aStart.time);
+        if (spanCandles < minSpan) continue;
+
+        const classified = classifyFlatPattern(aStart, aEnd, bEnd);
+        if (!classified) continue;
+        if (classified.type === 'regular' && classified.bRet < bRetMinReg) continue;
+
+        // Test multiple origins before A-start and keep the best coherent context.
+        let best = null;
+        const from = Math.max(0, aStartIdx - maxOriginSpan);
+        for (let oIdx = aStartIdx - 1; oIdx >= from; oIdx--) {
+          const origin = conf[oIdx];
+          const confidence = scoreFlatCandidate({
+            classified,
+            origin,
+            aStart,
+            bEnd,
+            next,
+            spanCandles,
+            minSpan,
+          });
+          if (!best || confidence > best.confidence) {
+            best = { origin, confidence };
+          }
+        }
+        if (!best) {
+          const confidence = scoreFlatCandidate({
+            classified,
+            origin: null,
+            aStart,
+            bEnd,
+            next,
+            spanCandles,
+            minSpan,
+          });
+          best = { origin: null, confidence };
+        }
+
+        if (best.confidence < minConfidence) continue;
+
+        const entry = {
+          ...classified,
+          aStart,
+          aEnd,
+          bEnd,
+          origin: best.origin,
+          next,
+          spanCandles,
+          confidence: best.confidence,
+        };
+
+        const key = `${bEnd.time}:${classified.type}:${classified.bias}`;
+        const prev = bestByKey.get(key);
+        if (!prev || entry.confidence > prev.confidence) bestByKey.set(key, entry);
+      }
+    }
   }
 
-  return results;
+  const all = [...bestByKey.values()].sort((a, b) => b.confidence - a.confidence);
+  const byEndCount = new Map();
+  const kept = [];
+  for (const p of all) {
+    const k = p.bEnd.time;
+    const count = byEndCount.get(k) ?? 0;
+    if (count >= topPerBEnd) continue;
+    byEndCount.set(k, count + 1);
+    kept.push(p);
+  }
+
+  return kept;
 }
