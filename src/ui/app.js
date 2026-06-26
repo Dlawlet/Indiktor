@@ -7,7 +7,7 @@ import { snapshotAnalysis } from '../feedback/snapshot.js';
 import { createStore } from '../feedback/store.js';
 import { createWaveChart } from './chart.js';
 
-const SYMBOL = 'BTCUSDT';
+const symbol = () => el('asset').value;
 const THEME_KEY = 'wave-engine-theme';
 const feedbackStore = createStore();
 
@@ -33,12 +33,13 @@ applyTheme();
 
 async function run() {
   const sensitivity = +el('sensitivity').value;
+  document.title = `${symbol()} · Wave Engine`;
   setStatus('Fetching candles across all timeframes…');
 
   let datasets;
   try {
     datasets = await Promise.all(TIMEFRAMES.map((tf) =>
-      fetchKlines(SYMBOL, tf.interval, tf.limit).then((candles) => ({ tf, candles }))));
+      fetchKlines(symbol(), tf.interval, tf.limit).then((candles) => ({ tf, candles }))));
   } catch (e) {
     setStatus(`Data error: ${e.message}`, true);
     return;
@@ -57,7 +58,7 @@ async function run() {
   selectedIdx = null;
   renderTabs();
   renderActive();
-  setStatus(`updated ${new Date().toLocaleTimeString()} · ${SYMBOL}`);
+  setStatus(`updated ${new Date().toLocaleTimeString()} · ${symbol()}`);
 }
 
 function renderAlignment(a) {
@@ -197,9 +198,9 @@ async function snapshotActive() {
   const r = results[activeTf];
   if (!r) return;
   try {
-    const snap = snapshotAnalysis(r.ranked, { asset: SYMBOL, timeframe: activeTf, priceAtAnalysis: r.price });
+    const snap = snapshotAnalysis(r.ranked, { asset: symbol(), timeframe: activeTf, priceAtAnalysis: r.price });
     await feedbackStore.put({ id: snap.id, snapshot: snap, outcomes: {} });
-    setStatus(`📸 snapshot saved · ${SYMBOL} ${activeTf} · open Review to resolve it later`);
+    setStatus(`📸 snapshot saved · ${symbol()} ${activeTf} · open Review to resolve it later`);
   } catch (e) {
     setStatus(`Snapshot failed: ${e.message}`, true);
   }
@@ -212,6 +213,7 @@ function setStatus(msg, isError = false) {
 }
 
 el('theme-toggle').addEventListener('click', () => { isDark = !isDark; applyTheme(); });
+el('asset').addEventListener('change', () => { results = {}; selectedIdx = null; run(); });
 el('sensitivity').addEventListener('change', run);
 el('refresh').addEventListener('click', run);
 el('snapshot').addEventListener('click', snapshotActive);

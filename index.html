@@ -104,10 +104,15 @@
   <header>
     <div>
       <span class="logo">WAVE<span>ENGINE</span></span>
-      <span class="tag">BTC · FRACTAL (15m·1h·4h·1d) · ELLIOTT SCENARIOS</span>
+      <span class="tag">FRACTAL (15m·1h·4h·1d) · ELLIOTT SCENARIOS</span>
     </div>
     <div class="header-right">
       <span class="price" id="price">—</span>
+      <select id="asset" title="Switch asset">
+        <option value="BTCUSDT">BTC</option>
+        <option value="ETHUSDT">ETH</option>
+        <option value="SOLUSDT">SOL</option>
+      </select>
       <label class="tag">SENSITIVITY
         <select id="sensitivity" title="Zigzag reversal threshold (× ATR-14)">
           <option value="2">High (2× ATR)</option>
