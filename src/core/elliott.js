@@ -208,7 +208,10 @@ function tFlat(c) {
   const dirA = sign(p[1].price - p[0].price);
   if (dirA === 0) return null;
   const bRet = len(p[1], p[2]) / len(p[0], p[1]);
-  if (bRet < 0.9 || bRet > 1.5) return null; // outside the flat B-wave range
+  // Wave Theory: B "peut atteindre ou ne pas atteindre les 80%" — the 80/90% floor
+  // in Elliott is not required. A flat B can retrace as little as ~65% of A.
+  // Upper cap at 1.5: if B > 1.5× A the structure is better described as impulse noise.
+  if (bRet < 0.65 || bRet > 1.5) return null;
   // B exceeds A's start: for UP A, B's low (p[2]) went below A's starting low (p[0]);
   // for DOWN A, B's high (p[2]) went above A's starting high (p[0]).
   const exceedsStart = dirA > 0 ? p[2].price < p[0].price : p[2].price > p[0].price;
@@ -445,14 +448,32 @@ const TEMPLATES = [tImpulseComplete, tWave3, tWave5, tZigzagC, tFlat, tRunningFl
 /**
  * Run every template against the pivot sequence and return raw scenarios.
  * scoring.js converts these into ranked probabilities.
+ *
+ * Sliding window: each template is tried at pivot offsets 0, 1, 2 (trimming
+ * 0–2 confirmed pivots from the tail). This lets templates anchor on an
+ * earlier wave start when sub-swings within A or B fill up slice(-3) with
+ * micro-structure that hides the true A-B-C boundaries. The same scenario
+ * anchored at different positions is deduplicated by (id, bias, A-start time);
+ * older-anchored versions are discounted in guideline quality.
  */
-export function analyze(pivots) {
+export function analyze(pivots, maxOffset = 2) {
   const confirmed = pivots.filter((p) => !p.tentative);
   const live = pivots[pivots.length - 1] ?? null;
+  const seen = new Set();
   const scenarios = [];
-  for (const t of TEMPLATES) {
-    const s = t(confirmed, live);
-    if (s) scenarios.push(s);
+  for (let offset = 0; offset <= maxOffset; offset++) {
+    const view = offset === 0 ? confirmed : confirmed.slice(0, -offset);
+    for (const t of TEMPLATES) {
+      const s = t(view, live);
+      if (!s) continue;
+      const key = `${s.id}:${s.bias}:${s.anchorPivots?.[0]?.time ?? 0}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      // Slightly discount scenarios whose anchor is older — more recent windows
+      // are more relevant to the current price action.
+      const disc = Math.pow(0.88, offset);
+      scenarios.push(offset === 0 ? s : { ...s, guideline: Math.max(0, s.guideline * disc) });
+    }
   }
   return { pivots, confirmed, live, scenarios };
 }
