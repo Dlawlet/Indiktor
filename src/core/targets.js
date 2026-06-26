@@ -46,16 +46,21 @@ export function enrichScenario(scenario, ctx) {
   const dir = scenario.bias === 'up' ? 1 : -1;
   const inDir = (lvl) => (dir > 0 ? lvl.price > price : lvl.price < price);
 
+  // Only the scenario's own PROJECTED targets are eligible to be the TP (`base`).
+  // Structure / higher-timeframe levels merely *boost* a nearby projected target —
+  // a swing sitting next to current price is not a wave target.
   const candidates = [
-    ...scenario.targets.map((t) => ({ price: t.price, weight: ratioWeight(t.ratio), source: `fib ${t.label}` })),
+    ...scenario.targets.map((t) => ({ price: t.price, weight: ratioWeight(t.ratio), source: `fib ${t.label}`, base: true })),
     ...structuralLevels.map((l) => ({ price: l.price, weight: l.weight ?? 1.5, source: l.source ?? 'structure' })),
     ...extraLevels.map((l) => ({ price: l.price, weight: l.weight ?? 1.2, source: l.source ?? 'htf' })),
   ].filter(inDir);
 
   const clusters = confluence(candidates, tol);
-  // Prefer strongest confluence; among comparable weights prefer the nearer level.
-  const primary = clusters.length
-    ? clusters.slice().sort((a, b) => b.weight - a.weight || Math.abs(a.price - price) - Math.abs(b.price - price))[0]
+  const eligible = clusters.filter((c) => c.members.some((m) => m.base));
+  // Strongest confluence wins; among comparable weights prefer the nearer level.
+  const primary = (eligible.length ? eligible : clusters).length
+    ? (eligible.length ? eligible : clusters)
+        .slice().sort((a, b) => b.weight - a.weight || Math.abs(a.price - price) - Math.abs(b.price - price))[0]
     : { price: scenario.targets[0]?.price ?? price, weight: 1, members: [] };
 
   const tp = primary.price;
