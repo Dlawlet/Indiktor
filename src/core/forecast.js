@@ -58,7 +58,7 @@ function buildChannelPath(anchorPivots, currentPrice, atr, lastTime, intervalSec
 
   const dir = Math.sign(offset); // +1 UP channel, -1 DOWN channel
   const priceAt = (t, phase) => lineAt(t) + phase * offset;
-  const startPhase = clamp01((currentPrice - lineAt(lastTime)) / offset);
+  const startPhase = clampStartPhase((currentPrice - lineAt(lastTime)) / offset);
 
   const PHASES = scenarioId === 'wave-3'
     ? fullImpulsePhases(startPhase)   // W3 + W4 + W5 remaining structure
@@ -97,11 +97,11 @@ function fullImpulsePhases(sp) {
     [0.00, sp  ],  // W2 end — at base line
     [0.13, 0.82],  // W3.w1 sub-peak — near parallel
     [0.21, 0.26],  // W3.w2 sub-retrace — above base
-    [0.40, 1.22],  // W3.w3 sub-extension — breaks through parallel
-    [0.51, 0.68],  // W3.w4 sub-retrace
-    [0.62, 1.06],  // W3 complete (W3.w5) — just above parallel = W3 TP
-    [0.76, 1.03],  // W4 low — just above parallel (EW: must be above W1 peak)
-    [1.00, 1.15],  // W5 ultimate TP — beyond parallel
+    [0.40, 1.18],  // W3.w3 sub-extension — breaks through parallel
+    [0.51, 0.70],  // W3.w4 sub-retrace
+    [0.62, 1.08],  // W3 complete (W3.w5) — above parallel = W3 TP
+    [0.76, 1.02],  // W4 low — visibly below W3, but above parallel (EW: above W1 peak)
+    [1.00, 1.20],  // W5 ultimate TP — beyond parallel, the highest point
   ];
 }
 
@@ -159,13 +159,16 @@ function buildFreePath(currentPrice, target, dir, dist, atr, lastTime, intervalS
     // Segment weights: |0.52|, |0.33-0.52|=0.19, |1-0.33|=0.67 → total 1.38
     const aIdx = Math.min(n - 1, Math.ceil(n * (0.52 / 1.38)));
     const bIdx = Math.min(n - 1, Math.ceil(n * ((0.52 + 0.19) / 1.38)));
-    const dirA  = dir;
-    const high  = (c) => (dirA > 0 ? c.high : c.low);
-    const low   = (c) => (dirA > 0 ? c.low  : c.high);
+    // A and C move WITH the correction direction (in-direction extreme);
+    // B retraces against it (counter extreme). Mirrors extractChannelPivots.
+    const inDir   = (c) => (dir > 0 ? c.high : c.low);  // extreme reached moving in `dir`
+    const counter = (c) => (dir > 0 ? c.low  : c.high); // extreme of the retrace
+    const inDirSide   = dir > 0 ? 'up'   : 'down';
+    const counterSide = dir > 0 ? 'down' : 'up';
     projectedPivots = [
-      { time: candles[aIdx].time, price: low(candles[aIdx]),  label: 'A', dir: dirA > 0 ? 'down' : 'up'   },
-      { time: candles[bIdx].time, price: high(candles[bIdx]), label: 'B', dir: dirA > 0 ? 'up'   : 'down' },
-      { time: candles[n-1].time,  price: low(candles[n-1]),   label: 'C', dir: dirA > 0 ? 'down' : 'up'   },
+      { time: candles[aIdx].time, price: inDir(candles[aIdx]),   label: 'A', dir: inDirSide   },
+      { time: candles[bIdx].time, price: counter(candles[bIdx]), label: 'B', dir: counterSide },
+      { time: candles[n-1].time,  price: inDir(candles[n-1]),    label: 'C', dir: inDirSide   },
     ];
   } else if (n > 0) {
     const high = (c) => (dir > 0 ? c.high : c.low);
@@ -231,7 +234,9 @@ function estimateCandleCount(id, pivots, intervalSec, dist, atr) {
 // ---------------------------------------------------------------------------
 
 function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, Math.round(n))); }
-function clamp01(x) { return Math.max(0, Math.min(0.5, x)); }
+// Clamp the channel start phase to [0, 0.5]: the projection assumes price is
+// near the base line (we just finished wave-2), so it must not start past mid-channel.
+function clampStartPhase(x) { return Math.max(0, Math.min(0.5, x)); }
 
 function phaseLerp(knots, progress) {
   for (let i = 1; i < knots.length; i++) {
