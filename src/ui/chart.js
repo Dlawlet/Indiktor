@@ -54,14 +54,16 @@ export function createWaveChart(container, dark = true) {
 
   let priceLines = [];
   let projSeries = [];
-  let histSeries = [];    // historical flat tunnels — persist across scenario changes
-  let ghostSeries = null;  // separate from projSeries so it can be removed independently
+  let annotSeries = [];     // annotation + similarity overlays
+  let annotPriceLines = []; // price lines for annotation points
+  let ghostSeries = null;
   let _allPivots = [];
   let _labelMap = new Map();
-  let _histLabelMarkers = [];
+  let _extraMarkers = [];   // annotation / similarity markers
+  let _clickUnsub = null;
 
   function refreshMarkers() {
-    candles.setMarkers(mergeMarkers(buildPivotMarkers(T, _allPivots, _labelMap), _histLabelMarkers));
+    candles.setMarkers(mergeMarkers(buildPivotMarkers(T, _allPivots, _labelMap), _extraMarkers));
   }
 
   function clearOverlaysImpl() {
@@ -379,119 +381,101 @@ export function createWaveChart(container, dark = true) {
 
     drawPatternShape: (scenario, anchorPivots) => drawPatternShapeImpl(scenario, anchorPivots),
 
-    // ── Historical flat overlays ─────────────────────────────────────────────
-    // Each pattern's B-wave tunnel is drawn by fitting regression lines through
-    // ALL candle highs and ALL candle lows within the B-wave time range.
-    // This bounds the ACTUAL price channel rather than just connecting two endpoint pivots.
-    drawHistoricalFlats(patterns, candles) {
-      histSeries.forEach(s => chart.removeSeries(s));
-      histSeries = [];
-      _histLabelMarkers = [];
-
-      // Least-squares linear regression: returns f(x) = m*x + b
-      function linReg(pairs) {
-        const n = pairs.length;
-        if (n < 2) return null;
-        let sX = 0, sY = 0, sXY = 0, sXX = 0;
-        for (const [x, y] of pairs) { sX += x; sY += y; sXY += x * y; sXX += x * x; }
-        const d = n * sXX - sX * sX;
-        if (!d) return null;
-        const m = (n * sXY - sX * sY) / d;
-        const b = (sY - m * sX) / n;
-        return (x) => m * x + b;
-      }
-
-      const COLOR = {
-        regular: '#f0a500',
-        running: '#00d4ff',
-        expanding: '#ff7744',
-        contracting: '#5ccf7a',
+    // ── Annotation & similarity overlays ────────────────────────────────────
+    subscribeClick(callback) {
+      if (_clickUnsub) { chart.unsubscribeClick(_clickUnsub); }
+      _clickUnsub = (param) => {
+        if (!param.point || !param.time) return;
+        const price = candles.coordinateToPrice(param.point.y);
+        if (price != null) callback(param.time, price);
       };
-      const ALPHA_LINE = '88';
-      const ALPHA_FILL = '26';
-      const seenLabels = new Set();
+      chart.subscribeClick(_clickUnsub);
+    },
 
-      for (const p of patterns) {
-        const col = COLOR[p.type] ?? '#888888';
+    unsubscribeClick() {
+      if (_clickUnsub) { chart.unsubscribeClick(_clickUnsub); _clickUnsub = null; }
+    },
 
-        // All candles strictly within the B-wave (A-end → B-end)
-        const bCands = candles.filter(c => c.time >= p.aEnd.time && c.time <= p.bEnd.time);
-        if (bCands.length < 5) continue; // need enough points for a meaningful regression
+    drawAnnotPoints(points) {
+      annotPriceLines.forEach(pl => candles.removePriceLine(pl));
+      annotPriceLines = [];
+      annotSeries.forEach(s => chart.removeSeries(s));
+      annotSeries = [];
 
-        // Fit regression through candle HIGHS → upper channel wall
-        // Fit regression through candle LOWS  → lower channel wall
-        const hiAt = linReg(bCands.map(c => [c.time, c.high]));
-        const loAt = linReg(bCands.map(c => [c.time, c.low]));
-        if (!hiAt || !loAt) continue;
+      const ROLES  = ['A', 'B', 'C'];
+      const COLORS = ['#00ff88', '#f0a500', '#00d4ff'];
 
-        const t1 = p.aEnd.time;
-        const t2 = p.bEnd.time;
+      points.forEach((pt, i) => {
+        annotPriceLines.push(candles.createPriceLine({
+          price: pt.price, color: COLORS[i] + 'aa', lineWidth: 1,
+          lineStyle: LC.LineStyle.Dotted, axisLabelVisible: true, title: ROLES[i],
+        }));
+      });
 
-        const addH = (t1, v1, t2, v2, style) => {
-          const s = chart.addLineSeries({
-            color: col + ALPHA_LINE, lineWidth: 1, lineStyle: style,
-            priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
-          });
-          s.setData([{ time: t1, value: v1 }, { time: t2, value: v2 }]);
-          histSeries.push(s);
-        };
-
-        addH(t1, hiAt(t1), t2, hiAt(t2), LC.LineStyle.Solid);   // upper wall
-        addH(t1, loAt(t1), t2, loAt(t2), LC.LineStyle.Dashed);  // lower wall
-
-        // Explicit hatch inside the channel so the "between-lines" area is always visible,
-        // even on themes where AreaSeries gradients are too subtle.
-        const hatchCount = Math.max(8, Math.min(24, Math.round((t2 - t1) / 1800)));
-        const step = (t2 - t1) / (hatchCount + 1);
-        for (let i = 0; i < hatchCount; i++) {
-          const ta = Math.round(t1 + step * (i + 0.2));
-          const tb = Math.round(Math.min(t2, ta + step * 0.65));
-          if (tb <= ta) continue;
-          const hatch = chart.addLineSeries({
-            color: col + '20', lineWidth: 1, lineStyle: LC.LineStyle.Solid,
-            priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
-          });
-          hatch.setData([
-            { time: ta, value: hiAt(ta) },
-            { time: tb, value: loAt(tb) },
-          ]);
-          histSeries.push(hatch);
-        }
-
-        // Translucent fill from the upper wall downward
-        const fill = chart.addAreaSeries({
-          lineColor: 'transparent',
-          topColor: col + ALPHA_FILL,
-          bottomColor: 'transparent',
+      if (points.length >= 2) {
+        const line = chart.addLineSeries({
+          color: '#f0a50099', lineWidth: 1, lineStyle: LC.LineStyle.Dashed,
           priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
-          lineWidth: 0,
         });
-        fill.setData([
-          { time: t1, value: hiAt(t1) },
-          { time: t2, value: hiAt(t2) },
-        ]);
-        histSeries.push(fill);
-
-        const markerKey = `${p.bEnd.time}:${p.name}`;
-        if (!seenLabels.has(markerKey)) {
-          seenLabels.add(markerKey);
-          _histLabelMarkers.push({
-            time: p.bEnd.time,
-            position: p.dirA > 0 ? 'belowBar' : 'aboveBar',
-            color: col + 'cc',
-            shape: 'circle',
-            text: p.name,
-          });
-        }
+        line.setData(points.map(p => ({ time: p.time, value: p.price })));
+        annotSeries.push(line);
       }
 
+      _extraMarkers = points.map((pt, i) => ({
+        time: pt.time,
+        position: i === 1 ? (points[0] && pt.price > points[0].price ? 'aboveBar' : 'belowBar') : 'belowBar',
+        color: COLORS[i],
+        shape: 'circle',
+        text: ROLES[i],
+        size: 2,
+      }));
       refreshMarkers();
     },
 
-    clearHistoricalFlats() {
-      histSeries.forEach(s => chart.removeSeries(s));
-      histSeries = [];
-      _histLabelMarkers = [];
+    clearAnnotPoints() {
+      annotPriceLines.forEach(pl => candles.removePriceLine(pl));
+      annotPriceLines = [];
+      annotSeries.forEach(s => chart.removeSeries(s));
+      annotSeries = [];
+      _extraMarkers = [];
+      refreshMarkers();
+    },
+
+    drawSimilarMatches(matches) {
+      annotSeries.forEach(s => chart.removeSeries(s));
+      annotSeries = [];
+      _extraMarkers = [];
+
+      const COL = { regular: '#f0a500', running: '#00d4ff', expanding: '#ff7744', contracting: '#5ccf7a' };
+
+      matches.forEach(m => {
+        const col = COL[m.type] ?? '#aaaaaa';
+        const line = chart.addLineSeries({
+          color: col + '88', lineWidth: 2, lineStyle: LC.LineStyle.Solid,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        });
+        line.setData([
+          { time: m.aEnd.time, value: m.aEnd.price },
+          { time: m.bEnd.time, value: m.bEnd.price },
+        ]);
+        annotSeries.push(line);
+
+        _extraMarkers.push({
+          time: m.bEnd.time,
+          position: m.bias === 'bull' ? 'aboveBar' : 'belowBar',
+          color: col + 'cc',
+          shape: 'circle',
+          text: `~${(m.similarity * 100).toFixed(0)}%`,
+          size: 1,
+        });
+      });
+      refreshMarkers();
+    },
+
+    clearSimilarMatches() {
+      annotSeries.forEach(s => chart.removeSeries(s));
+      annotSeries = [];
+      _extraMarkers = [];
       refreshMarkers();
     },
 

@@ -8,7 +8,6 @@ import { resolveSnapshot } from '../feedback/resolve.js';
 import { createStore } from '../feedback/store.js';
 import { createWaveChart } from './chart.js';
 import { projectGhostCandles } from '../core/forecast.js';
-import { scanHistoricalFlats } from '../core/scanner.js';
 
 const symbol = () => el('asset').value;
 const THEME_KEY = 'wave-engine-theme';
@@ -22,13 +21,16 @@ const fmt = (n) => (n == null ? '—' : n.toLocaleString('en-US', { maximumFract
 const pct = (n) => `${n >= 0 ? '+' : ''}${(n * 100).toFixed(1)}%`;
 const leanClass = (label) => (label === 'bullish' ? 'up' : label === 'bearish' ? 'down' : 'mixed');
 
+const ANNOT_KEY = 'wave-annotations';
+
 let waveChart;
 let results = {};
 let activeTf = '1d';
 let selectedIdx = null;
 let lockedIdx = null;
 let isDark = (localStorage.getItem(THEME_KEY) ?? 'dark') === 'dark';
-let histOn = false;
+let annotMode = false;
+let annotPoints = [];
 
 function applyTheme() {
   document.body.classList.toggle('light', !isDark);
@@ -154,7 +156,7 @@ function renderActive() {
   waveChart.fit();
   renderLean(r.lean);
   renderScenarios(r.ranked);
-  if (histOn) applyHistOverlay();
+  if (annotMode) exitAnnotMode();
   // Re-apply lock if one is set and the scenario still exists in this TF
   if (lockedIdx != null && r.ranked[lockedIdx]) {
     waveChart.highlightScenario(r.ranked[lockedIdx], lockedIdx);
@@ -337,46 +339,139 @@ function setStatus(msg, isError = false) {
   s.classList.toggle('error', isError);
 }
 
-function applyHistOverlay() {
-  if (!waveChart) return;
-  const r = results[activeTf];
-  if (!r?.candles) return;
-  if (histOn) {
-    const sensitivity = +el('sensitivity').value;
-    // minSpan=30: require A+B to span at least 30 candles — eliminates spike-to-spike
-    // false detections while preserving true structural flat channels (30c = 30h on 1h,
-    // 5 days on 4h, etc.)
-    const patterns = scanHistoricalFlats(r.candles, {
-      atrMult: sensitivity,
-      minSpan: 24,
-      minConfidence: 0.68,
-      maxASpan: 10,
-      maxBSpan: 6,
-      maxOriginSpan: 8,
-      topPerBEnd: 2,
-    });
-    waveChart.drawHistoricalFlats(patterns, r.candles);
-    const byType = patterns.reduce((acc, p) => {
-      acc[p.type] = (acc[p.type] ?? 0) + 1;
-      return acc;
-    }, {});
-    const bull = patterns.filter((p) => p.market === 'bull').length;
-    const bear = patterns.length - bull;
-    const avgConf = patterns.length
-      ? (patterns.reduce((s, p) => s + (p.confidence ?? 0), 0) / patterns.length)
-      : 0;
-    setStatus(
-      `Historical flags: ${patterns.length} · ` +
-      `regular ${byType.regular ?? 0}, running ${byType.running ?? 0}, ` +
-      `expanding ${byType.expanding ?? 0}, contracting ${byType.contracting ?? 0} · ` +
-      `bull ${bull} / bear ${bear} · avg conf ${(avgConf * 100).toFixed(0)}%`
-    );
-  } else {
-    waveChart.clearHistoricalFlats();
+// ── Système d'annotation manuelle ───────────────────────────────────────────
+
+function loadAnnotations() {
+  try { return JSON.parse(localStorage.getItem(ANNOT_KEY) || '[]'); }
+  catch { return []; }
+}
+
+function saveAnnotations(list) {
+  localStorage.setItem(ANNOT_KEY, JSON.stringify(list));
+}
+
+function classifyFromPoints(pts) {
+  const aLen = Math.abs(pts[1].price - pts[0].price);
+  if (aLen === 0) return { type: 'regular', bias: 'bull', bRet: 0 };
+  const bLen = Math.abs(pts[2].price - pts[1].price);
+  const bRet = bLen / aLen;
+  const bias = pts[2].price > pts[1].price ? 'bull' : 'bear';
+  let type;
+  if (bRet < 0.65)       type = 'contracting';
+  else if (bRet < 1.0)   type = 'regular';
+  else if (bRet < 1.236) type = 'running';
+  else                    type = 'expanding';
+  return { type, bias, bRet };
+}
+
+function enterAnnotMode() {
+  annotMode = true;
+  annotPoints = [];
+  el('annot-mode').textContent = '✕ ANNULER';
+  el('annot-mode').classList.add('on');
+  el('annot-bar').style.display = 'flex';
+  el('annot-step').textContent = 'Cliquer le début de A';
+  el('annot-confirm').style.display = 'none';
+  el('annot-type').style.display = 'none';
+  el('annot-type-info').textContent = '';
+  waveChart.clearSimilarMatches();
+  waveChart.subscribeClick(handleAnnotClick);
+}
+
+function exitAnnotMode() {
+  annotMode = false;
+  annotPoints = [];
+  el('annot-mode').textContent = '✏ ANNOTER';
+  el('annot-mode').classList.remove('on');
+  el('annot-bar').style.display = 'none';
+  if (waveChart) {
+    waveChart.unsubscribeClick();
+    waveChart.clearAnnotPoints();
   }
-  const btn = el('hist-toggle');
-  btn.textContent = histOn ? 'HIST ON' : 'HIST OFF';
-  btn.classList.toggle('on', histOn);
+}
+
+function handleAnnotClick(time, price) {
+  annotPoints.push({ time, price });
+  waveChart.drawAnnotPoints(annotPoints);
+
+  if (annotPoints.length === 1) {
+    el('annot-step').textContent = 'A-début marqué — cliquer la fin de A (= début de B)';
+  } else if (annotPoints.length === 2) {
+    el('annot-step').textContent = 'Cliquer la fin de B (= début de C)';
+  } else if (annotPoints.length === 3) {
+    const { type, bias, bRet } = classifyFromPoints(annotPoints);
+    el('annot-step').textContent = 'Détecté :';
+    el('annot-type-info').textContent = `${bias === 'bull' ? '▲' : '▼'} ${bias} · B/A = ${bRet.toFixed(2)}`;
+    el('annot-type').value = type;
+    el('annot-type').style.display = '';
+    el('annot-confirm').style.display = '';
+    waveChart.unsubscribeClick();
+  }
+}
+
+function confirmAnnotation() {
+  const type = el('annot-type').value;
+  const { bias, bRet } = classifyFromPoints(annotPoints);
+  const annotation = {
+    id: Date.now().toString(),
+    asset: symbol(),
+    timeframe: activeTf,
+    type,
+    bias,
+    bRet,
+    pivots: [
+      { role: 'aStart', ...annotPoints[0] },
+      { role: 'aEnd',   ...annotPoints[1] },
+      { role: 'bEnd',   ...annotPoints[2] },
+    ],
+    createdAt: Date.now(),
+  };
+  const list = loadAnnotations();
+  list.push(annotation);
+  saveAnnotations(list);
+
+  const r = results[activeTf];
+  const matches = r?.pivots?.length ? findSimilarPatterns(annotation, r.pivots) : [];
+  exitAnnotMode();
+  if (matches.length) {
+    waveChart.drawSimilarMatches(matches);
+    setStatus(`✓ Annotation sauvée · ${matches.length} patterns similaires trouvés sur l'historique`);
+  } else {
+    setStatus(`✓ Annotation sauvée · aucun pattern similaire trouvé (essayer autre TF ou sensibilité)`);
+  }
+}
+
+function findSimilarPatterns(example, pivots, threshold = 0.45) {
+  const exBret    = example.bRet;
+  const exBias    = example.bias;
+  const [exA, exAEnd, exBEnd] = example.pivots;
+  const exDurRatio = (exBEnd.time - exAEnd.time) / Math.max(1, exAEnd.time - exA.time);
+
+  const out = [];
+  for (let i = 0; i + 2 < pivots.length; i++) {
+    const aStart = pivots[i];
+    const aEnd   = pivots[i + 1];
+    const bEnd   = pivots[i + 2];
+    if (aStart.type !== bEnd.type) continue;
+
+    const aLen = Math.abs(aEnd.price - aStart.price);
+    if (aLen === 0) continue;
+    const bLen  = Math.abs(bEnd.price - aEnd.price);
+    const bRet  = bLen / aLen;
+    const bias  = bEnd.price > aEnd.price ? 'bull' : 'bear';
+    if (bias !== exBias) continue;
+
+    const ratioDiff  = Math.abs(bRet - exBret) / Math.max(0.1, exBret);
+    const ratioScore = Math.max(0, 1 - ratioDiff * 2);
+
+    const durRatio  = (bEnd.time - aEnd.time) / Math.max(1, aEnd.time - aStart.time);
+    const durDiff   = Math.abs(durRatio - exDurRatio) / Math.max(0.1, exDurRatio);
+    const durScore  = Math.max(0, 1 - durDiff);
+
+    const score = 0.65 * ratioScore + 0.35 * durScore;
+    if (score >= threshold) out.push({ aStart, aEnd, bEnd, similarity: score, type: example.type, bias });
+  }
+  return out.sort((a, b) => b.similarity - a.similarity).slice(0, 20);
 }
 
 el('theme-toggle').addEventListener('click', () => { isDark = !isDark; applyTheme(); });
@@ -384,5 +479,7 @@ el('asset').addEventListener('change', () => { results = {}; selectedIdx = null;
 el('sensitivity').addEventListener('change', run);
 el('refresh').addEventListener('click', run);
 el('snapshot').addEventListener('click', snapshotActive);
-el('hist-toggle').addEventListener('click', () => { histOn = !histOn; applyHistOverlay(); });
+el('annot-mode').addEventListener('click', () => { if (annotMode) exitAnnotMode(); else enterAnnotMode(); });
+el('annot-confirm').addEventListener('click', confirmAnnotation);
+el('annot-cancel').addEventListener('click', exitAnnotMode);
 run();

@@ -106,7 +106,11 @@
       border:1px solid var(--amber);color:var(--amber);border-radius:2px}
     .macro-badge{font-size:.48rem;letter-spacing:.1em;padding:.1rem .3rem;
       border:1px solid var(--cyan);color:var(--cyan);border-radius:2px;margin-left:.3rem;vertical-align:middle;opacity:.75}
-    #hist-toggle.on{opacity:1;color:var(--amber);border-color:var(--amber);background:rgba(240,165,0,0.08)}
+    button#annot-mode.on{opacity:1;color:var(--amber);border-color:var(--amber);background:rgba(240,165,0,0.08)}
+    #annot-bar{align-items:center;gap:.8rem;padding:.5rem 1rem;background:rgba(240,165,0,0.06);
+      border-top:1px solid rgba(240,165,0,0.3);font-size:.68rem;flex-wrap:wrap}
+    #annot-step{color:var(--amber);font-weight:500}
+    #annot-type-info{color:var(--dim)}
   </style>
 </head>
 <body>
@@ -143,8 +147,20 @@
       <div class="lean mixed" id="alignment"></div>
     </div>
     <div class="panel">
-      <div class="panel-title">PRICE STRUCTURE <span class="tabs" id="tabs"></span><button id="hist-toggle" title="Show historical flat-family flags (regular, running, expanding, contracting) with names" style="font-family:inherit;font-size:.55rem;letter-spacing:.1em;padding:.2rem .5rem;opacity:.6">HIST OFF</button></div>
+      <div class="panel-title">PRICE STRUCTURE <span class="tabs" id="tabs"></span><button id="annot-mode" title="Annoter manuellement un pattern sur le graphique" style="font-family:inherit;font-size:.55rem;letter-spacing:.1em;padding:.2rem .5rem;opacity:.6">✏ ANNOTER</button></div>
       <div id="chart"></div>
+      <div id="annot-bar" style="display:none">
+        <span id="annot-step"></span>
+        <span id="annot-type-info"></span>
+        <select id="annot-type" style="display:none">
+          <option value="regular">Regular Flat</option>
+          <option value="running">Running Flat</option>
+          <option value="expanding">Expanding Flat</option>
+          <option value="contracting">Contracting Flat</option>
+        </select>
+        <button id="annot-confirm" style="display:none">✓ CONFIRMER</button>
+        <button id="annot-cancel">✕ ANNULER</button>
+      </div>
     </div>
     <div class="side">
       <div class="panel">

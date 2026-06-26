@@ -5,6 +5,8 @@
   "type": "module",
   "description": "Elliott Wave scenario projection for BTC/ETH (fractal, probability-ranked)",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "start": "python -m http.server 8000",
+    "dev": "python -m http.server 8000"
   }
 }
