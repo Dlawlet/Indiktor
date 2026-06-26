@@ -4,12 +4,15 @@
 import { fetchKlines } from '../core/data.js';
 import { TIMEFRAMES, runTimeframe, alignTimeframes } from '../core/multiframe.js';
 import { snapshotAnalysis } from '../feedback/snapshot.js';
+import { resolveSnapshot } from '../feedback/resolve.js';
 import { createStore } from '../feedback/store.js';
 import { createWaveChart } from './chart.js';
 import { projectGhostCandles } from '../core/forecast.js';
 
 const symbol = () => el('asset').value;
 const THEME_KEY = 'wave-engine-theme';
+const SNAP_KEY  = 'wave-engine-last-snap';
+const SNAP_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3 hours
 const INTERVAL_SECONDS = { '1m': 60, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 };
 const feedbackStore = createStore();
 
@@ -62,6 +65,7 @@ async function run() {
   renderTabs();
   renderActive();
   setStatus(`updated ${new Date().toLocaleTimeString()} · ${symbol()}`);
+  autoSnapshotAndResolve();
 }
 
 function renderAlignment(a) {
@@ -269,10 +273,51 @@ async function snapshotActive() {
   try {
     const snap = snapshotAnalysis(r.ranked, { asset: symbol(), timeframe: activeTf, priceAtAnalysis: r.price });
     await feedbackStore.put({ id: snap.id, snapshot: snap, outcomes: {} });
+    localStorage.setItem(SNAP_KEY, Date.now().toString());
     setStatus(`📸 snapshot saved · ${symbol()} ${activeTf} · open Review to resolve it later`);
   } catch (e) {
     setStatus(`Snapshot failed: ${e.message}`, true);
   }
+}
+
+/** Auto-snapshot all loaded timeframes + resolve pending snapshots, at most once per 3 h. */
+async function autoSnapshotAndResolve() {
+  const last = +localStorage.getItem(SNAP_KEY) || 0;
+  if (Date.now() - last < SNAP_INTERVAL_MS) return;
+  localStorage.setItem(SNAP_KEY, Date.now().toString());
+
+  // Snapshot every loaded timeframe so we capture all fractal degrees
+  for (const tf of TIMEFRAMES) {
+    const r = results[tf.id];
+    if (!r?.ranked?.length) continue;
+    try {
+      const snap = snapshotAnalysis(r.ranked, { asset: symbol(), timeframe: tf.id, priceAtAnalysis: r.price });
+      await feedbackStore.put({ id: snap.id, snapshot: snap, outcomes: {} });
+    } catch (_) { /* non-fatal */ }
+  }
+
+  // Resolve all pending snapshots using the freshest candles we already have
+  try {
+    const records = await feedbackStore.all();
+    for (const rec of records) {
+      const hasPending = Object.values(rec.outcomes).some(o => o.outcome === 'pending') ||
+                         Object.keys(rec.outcomes).length === 0;
+      if (!hasPending) continue;
+      const tfData = results[rec.snapshot.timeframe];
+      if (!tfData?.candles?.length) continue;
+      // Only use candles that printed AFTER the snapshot was taken
+      const later = tfData.candles.filter(c => c.time > rec.snapshot.takenAt / 1000);
+      if (!later.length) continue;
+      const resolved = resolveSnapshot(rec.snapshot, later);
+      const newOutcomes = { ...rec.outcomes };
+      for (const res of resolved.resolutions) {
+        if (res.outcome !== 'pending') {
+          newOutcomes[res.scenarioId] = { outcome: res.outcome, resolver: 'auto', price: res.price, time: res.time, reason: res.reason };
+        }
+      }
+      await feedbackStore.put({ ...rec, outcomes: newOutcomes, updatedTs: Math.floor(Date.now() / 1000) });
+    }
+  } catch (_) { /* non-fatal */ }
 }
 
 function setStatus(msg, isError = false) {
