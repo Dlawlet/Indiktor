@@ -14,7 +14,7 @@ const LIGHT = {
   scenario: ['#0055bb', '#6600cc', '#886600', '#cc4400'],
 };
 
-function buildMarkers(T, pivots, labelMap = new Map()) {
+function buildPivotMarkers(T, pivots, labelMap = new Map()) {
   return pivots.map((p) => ({
     time: p.time,
     position: p.type === 'H' ? 'aboveBar' : 'belowBar',
@@ -22,6 +22,10 @@ function buildMarkers(T, pivots, labelMap = new Map()) {
     shape: p.type === 'H' ? 'arrowDown' : 'arrowUp',
     text: labelMap.get(p.time) ?? (p.tentative ? '?' : ''),
   }));
+}
+
+function mergeMarkers(pivotMarkers, extraMarkers = []) {
+  return [...pivotMarkers, ...extraMarkers].sort((a, b) => a.time - b.time);
 }
 
 export function createWaveChart(container, dark = true) {
@@ -54,6 +58,11 @@ export function createWaveChart(container, dark = true) {
   let ghostSeries = null;  // separate from projSeries so it can be removed independently
   let _allPivots = [];
   let _labelMap = new Map();
+  let _histLabelMarkers = [];
+
+  function refreshMarkers() {
+    candles.setMarkers(mergeMarkers(buildPivotMarkers(T, _allPivots, _labelMap), _histLabelMarkers));
+  }
 
   function clearOverlaysImpl() {
     priceLines.forEach((pl) => candles.removePriceLine(pl));
@@ -65,7 +74,7 @@ export function createWaveChart(container, dark = true) {
 
   function setWaveLabelsImpl(anchorPivots, waveLabels) {
     _labelMap = new Map(anchorPivots.map((p, i) => [p.time, waveLabels[i]]));
-    candles.setMarkers(buildMarkers(T, _allPivots, _labelMap));
+    refreshMarkers();
   }
 
   function drawChannelImpl(anchorPivots, color, extendToTime = null) {
@@ -250,7 +259,7 @@ export function createWaveChart(container, dark = true) {
         wickUpColor: T.up, wickDownColor: T.down,
       });
       zig.applyOptions({ color: T.zig });
-      if (_allPivots.length) candles.setMarkers(buildMarkers(T, _allPivots, _labelMap));
+      if (_allPivots.length) refreshMarkers();
     },
 
     setCandles(data) { candles.setData(data); },
@@ -259,7 +268,7 @@ export function createWaveChart(container, dark = true) {
       _allPivots = pivots;
       _labelMap = new Map();
       zig.setData(pivots.map((p) => ({ time: p.time, value: p.price })));
-      candles.setMarkers(buildMarkers(T, pivots));
+      refreshMarkers();
     },
 
     clearOverlays: clearOverlaysImpl,
@@ -268,7 +277,7 @@ export function createWaveChart(container, dark = true) {
 
     clearWaveLabels() {
       _labelMap = new Map();
-      candles.setMarkers(buildMarkers(T, _allPivots));
+      refreshMarkers();
     },
 
     drawScenario(s, idx) {
@@ -377,6 +386,7 @@ export function createWaveChart(container, dark = true) {
     drawHistoricalFlats(patterns, candles) {
       histSeries.forEach(s => chart.removeSeries(s));
       histSeries = [];
+      _histLabelMarkers = [];
 
       // Least-squares linear regression: returns f(x) = m*x + b
       function linReg(pairs) {
@@ -391,9 +401,15 @@ export function createWaveChart(container, dark = true) {
         return (x) => m * x + b;
       }
 
-      const COLOR = { running: '#00d4ff', regular: '#f0a500' };
+      const COLOR = {
+        regular: '#f0a500',
+        running: '#00d4ff',
+        expanding: '#ff7744',
+        contracting: '#5ccf7a',
+      };
       const ALPHA_LINE = '55';
       const ALPHA_FILL = '0e';
+      const seenLabels = new Set();
 
       for (const p of patterns) {
         const col = COLOR[p.type] ?? '#888888';
@@ -436,12 +452,28 @@ export function createWaveChart(container, dark = true) {
           { time: t2, value: hiAt(t2) },
         ]);
         histSeries.push(fill);
+
+        const markerKey = `${p.bEnd.time}:${p.name}`;
+        if (!seenLabels.has(markerKey)) {
+          seenLabels.add(markerKey);
+          _histLabelMarkers.push({
+            time: p.bEnd.time,
+            position: p.dirA > 0 ? 'belowBar' : 'aboveBar',
+            color: col + 'cc',
+            shape: 'circle',
+            text: p.name,
+          });
+        }
       }
+
+      refreshMarkers();
     },
 
     clearHistoricalFlats() {
       histSeries.forEach(s => chart.removeSeries(s));
       histSeries = [];
+      _histLabelMarkers = [];
+      refreshMarkers();
     },
 
     fit() { chart.timeScale().fitContent(); },

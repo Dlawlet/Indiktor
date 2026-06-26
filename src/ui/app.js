@@ -348,6 +348,18 @@ function applyHistOverlay() {
     // 5 days on 4h, etc.)
     const patterns = scanHistoricalFlats(r.candles, { atrMult: sensitivity, minSpan: 30 });
     waveChart.drawHistoricalFlats(patterns, r.candles);
+    const byType = patterns.reduce((acc, p) => {
+      acc[p.type] = (acc[p.type] ?? 0) + 1;
+      return acc;
+    }, {});
+    const bull = patterns.filter((p) => p.market === 'bull').length;
+    const bear = patterns.length - bull;
+    setStatus(
+      `Historical flags: ${patterns.length} · ` +
+      `regular ${byType.regular ?? 0}, running ${byType.running ?? 0}, ` +
+      `expanding ${byType.expanding ?? 0}, contracting ${byType.contracting ?? 0} · ` +
+      `bull ${bull} / bear ${bear}`
+    );
   } else {
     waveChart.clearHistoricalFlats();
   }
