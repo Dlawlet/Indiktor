@@ -68,19 +68,33 @@ function featuresOf(s) {
   });
 }
 
-/** Deep-freeze one scenario into the persisted shape (prices captured as-is). */
-function snapshotScenario(s) {
+/**
+ * Deep-freeze one scenario into the persisted shape (prices captured as-is).
+ * @param {Object} s  scenario
+ * @param {{ isPrimary?: boolean }} [ctx]
+ */
+function snapshotScenario(s, ctx = {}) {
+  const prices = (s.targets ?? [])
+    .map((t) => num(t.price))
+    .filter((p) => Number.isFinite(p));
+  const tpLo = prices.length ? Math.min(...prices) : NaN;
+  const tpHi = prices.length ? Math.max(...prices) : NaN;
+
   return Object.freeze({
     id: s.id,
     name: s.name,
     bias: s.bias,
     pattern: s.pattern,
     invalidation: num(s.invalidation),
+    isPrimary: ctx.isPrimary === true,
     targets: Object.freeze(
       (s.targets ?? []).map((t) =>
         Object.freeze({ label: t.label, ratio: num(t.ratio), price: num(t.price) }),
       ),
     ),
+    tpLo,
+    tpHi,
+    targetCount: (s.targets ?? []).length,
     features: featuresOf(s),
   });
 }
@@ -110,7 +124,7 @@ export function snapshotAnalysis(analysis, { asset, timeframe, priceAtAnalysis, 
     asset,
     timeframe,
     priceAtAnalysis: num(priceAtAnalysis),
-    scenarios: Object.freeze(list.map(snapshotScenario)),
+    scenarios: Object.freeze(list.map((s, i) => snapshotScenario(s, { isPrimary: i === 0 }))),
   });
 }
 

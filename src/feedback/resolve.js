@@ -30,15 +30,35 @@
  * The target "zone" for a scenario is the span of its projected target prices.
  * We treat the NEAREST edge of that span (in the bias direction) as the trigger:
  * price entering the zone counts as the target being reached.
+ *
+ * Prefers the pre-computed `tpLo`/`tpHi` fields stored on the snapshot (richer
+ * snapshots captured after the zone-aware update). Falls back to computing the
+ * range from `scenario.targets` for legacy snapshots that lack these fields.
+ *
  * @returns {{ near:number, far:number }|null}
  */
 function targetZone(scenario) {
-  const prices = (scenario.targets ?? [])
-    .map((t) => +t.price)
-    .filter((p) => Number.isFinite(p));
-  if (!prices.length) return null;
-  const lo = Math.min(...prices);
-  const hi = Math.max(...prices);
+  // Prefer explicit tpLo/tpHi if present (new snapshot format).
+  let lo = +scenario.tpLo;
+  let hi = +scenario.tpHi;
+
+  // Fall back to deriving from targets array (old snapshots).
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) {
+    // Also fall back to tp.price when targets array is absent.
+    const tpPrice = scenario.tp?.price;
+    const prices = (scenario.targets ?? [])
+      .map((t) => +t.price)
+      .filter((p) => Number.isFinite(p));
+    if (prices.length) {
+      lo = Math.min(...prices);
+      hi = Math.max(...prices);
+    } else if (Number.isFinite(+tpPrice)) {
+      lo = hi = +tpPrice;
+    } else {
+      return null;
+    }
+  }
+
   // For an up move the zone is above price; the first edge reached is the low one.
   // For a down move the zone is below; the first edge reached is the high one.
   return scenario.bias === 'up' ? { near: lo, far: hi } : { near: hi, far: lo };
