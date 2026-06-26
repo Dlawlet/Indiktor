@@ -50,6 +50,7 @@ export function createWaveChart(container, dark = true) {
 
   let priceLines = [];
   let projSeries = [];
+  let ghostSeries = null;  // separate from projSeries so it can be removed independently
   let _allPivots = [];
   let _labelMap = new Map();
 
@@ -58,6 +59,7 @@ export function createWaveChart(container, dark = true) {
     priceLines = [];
     projSeries.forEach((s) => chart.removeSeries(s));
     projSeries = [];
+    if (ghostSeries) { chart.removeSeries(ghostSeries); ghostSeries = null; }
   }
 
   function setWaveLabelsImpl(anchorPivots, waveLabels) {
@@ -82,6 +84,95 @@ export function createWaveChart(container, dark = true) {
     };
     addDiag(a.price, c.price, LC.LineStyle.Solid);
     addDiag(paraAtA, paraAtC, LC.LineStyle.Dashed);
+  }
+
+  function drawPatternShapeImpl(scenario, anchorPivots) {
+    if (!anchorPivots || anchorPivots.length < 2) return;
+    const id = scenario.id;
+
+    // --- Triangles: draw BOTH converging/diverging trendlines ---
+    if ((id === 'contracting-triangle' || id === 'expanding-triangle') && anchorPivots.length >= 6) {
+      const p = anchorPivots;
+      // Determine which pivots are highs vs lows based on first wave direction
+      const firstLegDir = Math.sign(p[1].price - p[0].price);
+      // Even indices go one direction, odd the other
+      // For DOWN first leg: p[0],p[2],p[4] are HIGHs; p[1],p[3],p[5] are LOWs
+      const setA = [p[0], p[2], p[4]];  // pivot extremes of one side
+      const setB = [p[1], p[3], p[5]];  // pivot extremes of the other side
+      const addTrendLine = (pa, pb, style) => {
+        const s = chart.addLineSeries({
+          color: T.zig + 'aa', lineWidth: 1, lineStyle: style,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        });
+        s.setData([{time: pa.time, value: pa.price}, {time: pb.time, value: pb.price}]);
+        projSeries.push(s);
+      };
+      addTrendLine(setA[0], setA[2], LC.LineStyle.Solid);
+      addTrendLine(setB[0], setB[2], LC.LineStyle.Solid);
+      return;
+    }
+
+    // --- Flats and running flat: draw A-level and B-level horizontal zones ---
+    if (id === 'flat-regular' || id === 'flat-expanded' || id === 'running-flat') {
+      const p = anchorPivots;  // [A-start, B-end, B/C-start]
+      if (p.length < 3) return;
+      // The two key structural levels are the A-start and B-extreme
+      [p[0].price, p[1].price].forEach((lvl, i) => {
+        priceLines.push(candles.createPriceLine({
+          price: lvl,
+          color: T.zig + '55',
+          lineWidth: 1,
+          lineStyle: LC.LineStyle.Dotted,
+          axisLabelVisible: false,
+          title: i === 0 ? 'A-lvl' : 'B-ext',
+        }));
+      });
+      return;
+    }
+
+    // --- Zigzag / double-zigzag: draw horizontal target zone band ---
+    if (id === 'zigzag-c' || id === 'double-zigzag') {
+      if (scenario.targets.length >= 2) {
+        const prices = scenario.targets.map(t => t.price);
+        const lo = Math.min(...prices);
+        const hi = Math.max(...prices);
+        [lo, hi].forEach((lvl, i) => {
+          priceLines.push(candles.createPriceLine({
+            price: lvl,
+            color: T.scenario[0] + '55',
+            lineWidth: 1,
+            lineStyle: LC.LineStyle.Dotted,
+            axisLabelVisible: false,
+            title: i === 0 ? 'zone lo' : 'zone hi',
+          }));
+        });
+      }
+      return;
+    }
+
+    // --- Impulse patterns (wave-3, wave-5, impulse-complete, continuation): ---
+    // The channel is already drawn by drawChannelImpl in highlightScenario.
+    // Add a subtle area wash so the channel "region" is visible.
+    // Use the top channel line as an AreaSeries with very low opacity.
+    if (anchorPivots.length >= 3) {
+      const [a, b, c] = anchorPivots.slice(-3);
+      if (c.time <= a.time) return;
+      const color = T.scenario[0];
+      const area = chart.addAreaSeries({
+        lineColor: 'transparent',
+        topColor: color + '0d',     // ~5% opacity fill beneath upper channel line
+        bottomColor: 'transparent',
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+        lineWidth: 0,
+      });
+      area.setData([
+        { time: a.time, value: a.price },
+        { time: c.time, value: c.price },
+      ]);
+      projSeries.push(area);
+    }
   }
 
   return {
@@ -171,6 +262,25 @@ export function createWaveChart(container, dark = true) {
       if (s.anchorPivots) drawChannelImpl(s.anchorPivots, color + '88');
       if (s.anchorPivots && s.waveLabels) setWaveLabelsImpl(s.anchorPivots, s.waveLabels);
     },
+
+    drawGhostCandles(ghostData) {
+      if (!ghostData || ghostData.length === 0) return;
+      if (ghostSeries) { chart.removeSeries(ghostSeries); ghostSeries = null; }
+      ghostSeries = chart.addCandlestickSeries({
+        upColor:      'rgba(160,160,160,0.18)',
+        downColor:    'rgba(110,110,110,0.18)',
+        wickUpColor:  'rgba(160,160,160,0.32)',
+        wickDownColor:'rgba(110,110,110,0.32)',
+        borderUpColor:  'rgba(160,160,160,0.45)',
+        borderDownColor:'rgba(110,110,110,0.45)',
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      });
+      ghostSeries.setData(ghostData);
+    },
+
+    drawPatternShape: (scenario, anchorPivots) => drawPatternShapeImpl(scenario, anchorPivots),
 
     fit() { chart.timeScale().fitContent(); },
   };

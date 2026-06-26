@@ -6,9 +6,11 @@ import { TIMEFRAMES, runTimeframe, alignTimeframes } from '../core/multiframe.js
 import { snapshotAnalysis } from '../feedback/snapshot.js';
 import { createStore } from '../feedback/store.js';
 import { createWaveChart } from './chart.js';
+import { projectGhostCandles } from '../core/forecast.js';
 
 const symbol = () => el('asset').value;
 const THEME_KEY = 'wave-engine-theme';
+const INTERVAL_SECONDS = { '1m': 60, '1h': 3600, '4h': 14400, '1d': 86400 };
 const feedbackStore = createStore();
 
 const el = (id) => document.getElementById(id);
@@ -91,6 +93,32 @@ function renderTabs() {
     }));
 }
 
+function computeATR(candles, period = 14) {
+  const slice = candles.slice(-period);
+  return slice.reduce((s, c) => s + (c.high - c.low), 0) / slice.length;
+}
+
+function _drawExtras(r, scenario, idx) {
+  // Pattern shape
+  if (scenario.anchorPivots) {
+    waveChart.drawPatternShape(scenario, scenario.anchorPivots);
+  }
+  // Ghost candles
+  if (scenario.targets?.length > 0) {
+    const atr = computeATR(r.candles);
+    const lastCandle = r.candles[r.candles.length - 1];
+    const intervalSec = INTERVAL_SECONDS[activeTf] ?? 3600;
+    const ghostData = projectGhostCandles({
+      currentPrice: lastCandle.close,
+      targetPrice: scenario.targets[0].price,
+      atr,
+      lastTime: lastCandle.time,
+      intervalSec,
+    });
+    waveChart.drawGhostCandles(ghostData);
+  }
+}
+
 function renderActive() {
   const r = results[activeTf];
   if (!r) return;
@@ -115,6 +143,7 @@ function renderActive() {
   // Re-apply lock if one is set and the scenario still exists in this TF
   if (lockedIdx != null && r.ranked[lockedIdx]) {
     waveChart.highlightScenario(r.ranked[lockedIdx], lockedIdx);
+    _drawExtras(r, r.ranked[lockedIdx], lockedIdx);
     renderWavePosition(r.ranked[lockedIdx]);
   } else if (lockedIdx != null) {
     // Locked scenario doesn't exist in this TF — show default but keep lock state
@@ -199,6 +228,7 @@ function renderScenarios(ranked) {
       } else {
         selectedIdx = idx;
         waveChart.highlightScenario(r.ranked[idx], idx);
+        _drawExtras(r, r.ranked[idx], idx);
         renderWavePosition(r.ranked[idx]);
         wrap.querySelectorAll('.card').forEach((c, i) =>
           c.classList.toggle('selected', i === idx));
@@ -224,6 +254,7 @@ function renderScenarios(ranked) {
         lockedIdx = idx;
         selectedIdx = idx;
         waveChart.highlightScenario(r.ranked[idx], idx);
+        _drawExtras(r, r.ranked[idx], idx);
         renderWavePosition(r.ranked[idx]);
       }
       renderScenarios(r.ranked); // re-render cards to update lock icons
