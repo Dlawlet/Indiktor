@@ -343,8 +343,11 @@ function applyHistOverlay() {
   if (!r?.candles) return;
   if (histOn) {
     const sensitivity = +el('sensitivity').value;
-    const patterns = scanHistoricalFlats(r.candles, { atrMult: sensitivity });
-    waveChart.drawHistoricalFlats(patterns);
+    // minSpan=30: require A+B to span at least 30 candles — eliminates spike-to-spike
+    // false detections while preserving true structural flat channels (30c = 30h on 1h,
+    // 5 days on 4h, etc.)
+    const patterns = scanHistoricalFlats(r.candles, { atrMult: sensitivity, minSpan: 30 });
+    waveChart.drawHistoricalFlats(patterns, r.candles);
   } else {
     waveChart.clearHistoricalFlats();
   }

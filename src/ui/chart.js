@@ -371,33 +371,45 @@ export function createWaveChart(container, dark = true) {
     drawPatternShape: (scenario, anchorPivots) => drawPatternShapeImpl(scenario, anchorPivots),
 
     // ── Historical flat overlays ─────────────────────────────────────────────
-    // Drawn once per toggle, independent of per-scenario overlays.
-    // Each pattern gets a muted B-wave tunnel (A-end → B-end) on the actual
-    // candles so the user can see where the engine would have flagged a flat.
-    drawHistoricalFlats(patterns) {
-      // Remove any existing history layer first
+    // Each pattern's B-wave tunnel is drawn by fitting regression lines through
+    // ALL candle highs and ALL candle lows within the B-wave time range.
+    // This bounds the ACTUAL price channel rather than just connecting two endpoint pivots.
+    drawHistoricalFlats(patterns, candles) {
       histSeries.forEach(s => chart.removeSeries(s));
       histSeries = [];
 
-      // Color by type — muted so they don't compete with live scenarios
-      const COLOR = {
-        running: '#00d4ff',  // cyan
-        regular: '#f0a500',  // amber
-      };
-      const ALPHA_LINE = '50'; // ~31% for tunnel walls
-      const ALPHA_FILL = '12'; // ~7%  for fill
+      // Least-squares linear regression: returns f(x) = m*x + b
+      function linReg(pairs) {
+        const n = pairs.length;
+        if (n < 2) return null;
+        let sX = 0, sY = 0, sXY = 0, sXX = 0;
+        for (const [x, y] of pairs) { sX += x; sY += y; sXY += x * y; sXX += x * x; }
+        const d = n * sXX - sX * sX;
+        if (!d) return null;
+        const m = (n * sXY - sX * sY) / d;
+        const b = (sY - m * sX) / n;
+        return (x) => m * x + b;
+      }
+
+      const COLOR = { running: '#00d4ff', regular: '#f0a500' };
+      const ALPHA_LINE = '55';
+      const ALPHA_FILL = '0e';
 
       for (const p of patterns) {
-        const col  = COLOR[p.type] ?? '#888888';
-        const a    = p.aEnd;   // A-end = B-wave start
-        const b    = p.bEnd;   // B-end = pattern anchor
+        const col = COLOR[p.type] ?? '#888888';
 
-        const bDur  = Math.max(1, b.time - a.time);
-        const slope = (b.price - a.price) / bDur;
-        // Parallel offset: distance between A-start and A-end (the width of A)
-        const pOff  = p.aStart.price - a.price;
-        const baseAt = (t) => a.price + slope * (t - a.time);
-        const paraAt = (t) => baseAt(t) + pOff;
+        // All candles strictly within the B-wave (A-end → B-end)
+        const bCands = candles.filter(c => c.time >= p.aEnd.time && c.time <= p.bEnd.time);
+        if (bCands.length < 5) continue; // need enough points for a meaningful regression
+
+        // Fit regression through candle HIGHS → upper channel wall
+        // Fit regression through candle LOWS  → lower channel wall
+        const hiAt = linReg(bCands.map(c => [c.time, c.high]));
+        const loAt = linReg(bCands.map(c => [c.time, c.low]));
+        if (!hiAt || !loAt) continue;
+
+        const t1 = p.aEnd.time;
+        const t2 = p.bEnd.time;
 
         const addH = (t1, v1, t2, v2, style) => {
           const s = chart.addLineSeries({
@@ -408,22 +420,20 @@ export function createWaveChart(container, dark = true) {
           histSeries.push(s);
         };
 
-        // Solid lower wall of B tunnel + dashed upper (parallel) wall
-        addH(a.time, baseAt(a.time), b.time, baseAt(b.time), LC.LineStyle.Solid);
-        addH(a.time, paraAt(a.time), b.time, paraAt(b.time), LC.LineStyle.Dashed);
+        addH(t1, hiAt(t1), t2, hiAt(t2), LC.LineStyle.Solid);   // upper wall
+        addH(t1, loAt(t1), t2, loAt(t2), LC.LineStyle.Dashed);  // lower wall
 
-        // Translucent fill: area series from the upper wall, fading down
-        const upperAt = pOff >= 0 ? paraAt : baseAt;
+        // Translucent fill from the upper wall downward
         const fill = chart.addAreaSeries({
-          lineColor:   'transparent',
-          topColor:    col + ALPHA_FILL,
+          lineColor: 'transparent',
+          topColor: col + ALPHA_FILL,
           bottomColor: 'transparent',
           priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
           lineWidth: 0,
         });
         fill.setData([
-          { time: a.time, value: upperAt(a.time) },
-          { time: b.time, value: upperAt(b.time) },
+          { time: t1, value: hiAt(t1) },
+          { time: t2, value: hiAt(t2) },
         ]);
         histSeries.push(fill);
       }
