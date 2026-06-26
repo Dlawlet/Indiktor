@@ -212,9 +212,9 @@ function tFlat(c) {
   const dirA = sign(p[1].price - p[0].price);
   if (dirA === 0) return null;
   const bRet = len(p[1], p[2]) / len(p[0], p[1]);
-  // Wave Theory: B can retrace as little as 65% of A — the Elliott 80% floor is not required.
-  // Upper bound < 1.0: if B reaches or exceeds A's origin, that is a running flat.
-  if (bRet < 0.65 || bRet >= 1.0) return null;
+  // Backtester calibration: bRet ≥ 0.70 gives ~10% better hit rate than 0.65 on 1h/4h/1d
+  // (76-81% vs 67-75% depending on timeframe). Worth losing a few extra detections.
+  if (bRet < 0.70 || bRet >= 1.0) return null;
   // Explicit guard: B must stay below A's starting price.
   const exceedsStart = dirA > 0 ? p[2].price < p[0].price : p[2].price > p[0].price;
   if (exceedsStart) return null; // running flat territory — tRunningFlat handles it

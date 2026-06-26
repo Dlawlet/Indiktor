@@ -8,6 +8,7 @@ import { resolveSnapshot } from '../feedback/resolve.js';
 import { createStore } from '../feedback/store.js';
 import { createWaveChart } from './chart.js';
 import { projectGhostCandles } from '../core/forecast.js';
+import { scanHistoricalFlats } from '../core/scanner.js';
 
 const symbol = () => el('asset').value;
 const THEME_KEY = 'wave-engine-theme';
@@ -27,6 +28,7 @@ let activeTf = '1d';
 let selectedIdx = null;
 let lockedIdx = null;
 let isDark = (localStorage.getItem(THEME_KEY) ?? 'dark') === 'dark';
+let histOn = false;
 
 function applyTheme() {
   document.body.classList.toggle('light', !isDark);
@@ -152,6 +154,7 @@ function renderActive() {
   waveChart.fit();
   renderLean(r.lean);
   renderScenarios(r.ranked);
+  if (histOn) applyHistOverlay();
   // Re-apply lock if one is set and the scenario still exists in this TF
   if (lockedIdx != null && r.ranked[lockedIdx]) {
     waveChart.highlightScenario(r.ranked[lockedIdx], lockedIdx);
@@ -334,9 +337,26 @@ function setStatus(msg, isError = false) {
   s.classList.toggle('error', isError);
 }
 
+function applyHistOverlay() {
+  if (!waveChart) return;
+  const r = results[activeTf];
+  if (!r?.candles) return;
+  if (histOn) {
+    const sensitivity = +el('sensitivity').value;
+    const patterns = scanHistoricalFlats(r.candles, { atrMult: sensitivity });
+    waveChart.drawHistoricalFlats(patterns);
+  } else {
+    waveChart.clearHistoricalFlats();
+  }
+  const btn = el('hist-toggle');
+  btn.textContent = histOn ? 'HIST ON' : 'HIST OFF';
+  btn.classList.toggle('on', histOn);
+}
+
 el('theme-toggle').addEventListener('click', () => { isDark = !isDark; applyTheme(); });
 el('asset').addEventListener('change', () => { results = {}; selectedIdx = null; lockedIdx = null; run(); });
 el('sensitivity').addEventListener('change', run);
 el('refresh').addEventListener('click', run);
 el('snapshot').addEventListener('click', snapshotActive);
+el('hist-toggle').addEventListener('click', () => { histOn = !histOn; applyHistOverlay(); });
 run();

@@ -50,6 +50,7 @@ export function createWaveChart(container, dark = true) {
 
   let priceLines = [];
   let projSeries = [];
+  let histSeries = [];    // historical flat tunnels — persist across scenario changes
   let ghostSeries = null;  // separate from projSeries so it can be removed independently
   let _allPivots = [];
   let _labelMap = new Map();
@@ -368,6 +369,70 @@ export function createWaveChart(container, dark = true) {
     },
 
     drawPatternShape: (scenario, anchorPivots) => drawPatternShapeImpl(scenario, anchorPivots),
+
+    // ── Historical flat overlays ─────────────────────────────────────────────
+    // Drawn once per toggle, independent of per-scenario overlays.
+    // Each pattern gets a muted B-wave tunnel (A-end → B-end) on the actual
+    // candles so the user can see where the engine would have flagged a flat.
+    drawHistoricalFlats(patterns) {
+      // Remove any existing history layer first
+      histSeries.forEach(s => chart.removeSeries(s));
+      histSeries = [];
+
+      // Color by type — muted so they don't compete with live scenarios
+      const COLOR = {
+        running: '#00d4ff',  // cyan
+        regular: '#f0a500',  // amber
+      };
+      const ALPHA_LINE = '50'; // ~31% for tunnel walls
+      const ALPHA_FILL = '12'; // ~7%  for fill
+
+      for (const p of patterns) {
+        const col  = COLOR[p.type] ?? '#888888';
+        const a    = p.aEnd;   // A-end = B-wave start
+        const b    = p.bEnd;   // B-end = pattern anchor
+
+        const bDur  = Math.max(1, b.time - a.time);
+        const slope = (b.price - a.price) / bDur;
+        // Parallel offset: distance between A-start and A-end (the width of A)
+        const pOff  = p.aStart.price - a.price;
+        const baseAt = (t) => a.price + slope * (t - a.time);
+        const paraAt = (t) => baseAt(t) + pOff;
+
+        const addH = (t1, v1, t2, v2, style) => {
+          const s = chart.addLineSeries({
+            color: col + ALPHA_LINE, lineWidth: 1, lineStyle: style,
+            priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+          });
+          s.setData([{ time: t1, value: v1 }, { time: t2, value: v2 }]);
+          histSeries.push(s);
+        };
+
+        // Solid lower wall of B tunnel + dashed upper (parallel) wall
+        addH(a.time, baseAt(a.time), b.time, baseAt(b.time), LC.LineStyle.Solid);
+        addH(a.time, paraAt(a.time), b.time, paraAt(b.time), LC.LineStyle.Dashed);
+
+        // Translucent fill: area series from the upper wall, fading down
+        const upperAt = pOff >= 0 ? paraAt : baseAt;
+        const fill = chart.addAreaSeries({
+          lineColor:   'transparent',
+          topColor:    col + ALPHA_FILL,
+          bottomColor: 'transparent',
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+          lineWidth: 0,
+        });
+        fill.setData([
+          { time: a.time, value: upperAt(a.time) },
+          { time: b.time, value: upperAt(b.time) },
+        ]);
+        histSeries.push(fill);
+      }
+    },
+
+    clearHistoricalFlats() {
+      histSeries.forEach(s => chart.removeSeries(s));
+      histSeries = [];
+    },
 
     fit() { chart.timeScale().fitContent(); },
   };
