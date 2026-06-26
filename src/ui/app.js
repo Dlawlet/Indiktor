@@ -133,12 +133,15 @@ function renderActive() {
   waveChart.clearOverlays();
   waveChart.clearWaveLabels();
   r.ranked.slice(0, 3).forEach((s, i) => waveChart.drawScenario(s, i));
-  // Auto-show the primary scenario's channel (the "flag/tunnel") and wave labels
-  // so the structure is visible without having to click a card.
+  // Auto-draw channel bounds for the top 3 scenarios so the flag zones are
+  // always visible without needing to click a card.
+  const channelOpacity = ['55', '38', '22'];
+  r.ranked.slice(0, 3).forEach((s, i) => {
+    if (s.anchorPivots?.length >= 3) {
+      waveChart.drawChannel(s.anchorPivots, waveChart.scenarioColor(i) + channelOpacity[i]);
+    }
+  });
   const top = r.ranked[0];
-  if (top?.anchorPivots?.length >= 3) {
-    waveChart.drawChannel(top.anchorPivots, waveChart.scenarioColor(0) + '50');
-  }
   if (top?.anchorPivots && top?.waveLabels) {
     waveChart.setWaveLabels(top.anchorPivots, top.waveLabels);
   }
@@ -199,11 +202,12 @@ function renderScenarios(ranked) {
       ? `<span class="rr ${s.rr >= 2 ? 'good' : s.rr >= 1 ? 'ok' : 'bad'}">${s.rr.toFixed(1)} : 1</span>`
       : '—';
     const isSelected = selectedIdx === i;
+    const macroBadge = s.degree === 'macro' ? '<span class="macro-badge">MACRO</span>' : '';
     return `
       <div class="card${isSelected ? ' selected' : ''}" style="--accent:${color}" data-idx="${i}">
         <div class="card-head">
           <span class="rank">S${i + 1}</span>
-          <span class="name">${s.name}</span>
+          <span class="name">${s.name}</span>${macroBadge}
           <span class="bias ${s.bias}">${s.bias === 'up' ? '▲' : '▼'} ${s.bias}</span>
           <span class="prob">${p}%</span>
           <button class="lock-btn ${lockedIdx === i ? 'locked' : ''}" data-idx="${i}" title="Lock this scenario">${lockedIdx === i ? '🔒' : '🔓'}</button>

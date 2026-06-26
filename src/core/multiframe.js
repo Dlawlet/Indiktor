@@ -19,13 +19,28 @@ export const TIMEFRAMES = [
 
 /** Run the full engine chain on one timeframe's candles. */
 export function runTimeframe(candles, { atrMult = 3, atrPeriod = 14 } = {}) {
+  // Fine pass: short-term structure (the current active zigzag shown on chart)
   const pivots = zigzag(candles, { atrMult, atrPeriod });
+
+  // Macro pass: 2.5× stricter threshold → only major structural pivots survive.
+  // This allows the EW templates to see the large-degree wave shapes (running
+  // flat, expanded flat, multi-month impulse) that the fine pass misses because
+  // its slice(-3) / slice(-6) is buried in recent minor swings.
+  const macroPivots = zigzag(candles, { atrMult: atrMult * 2.5, atrPeriod });
+  const macroScenarios = rankScenarios(analyze(macroPivots))
+    .map((s) => ({ ...s, degree: 'macro', probability: s.probability * 0.88 }));
+
   const price = candles.length ? candles[candles.length - 1].close : null;
   const structuralLevels = pivots
     .filter((p) => !p.tentative)
     .slice(-14)
     .map((p) => ({ price: p.price, source: 'swing', weight: 1.5 }));
-  const ranked = enrichScenarios(rankScenarios(analyze(pivots)), { price, structuralLevels });
+
+  // Merge both degree scenarios, re-sort by probability
+  const combined = [...rankScenarios(analyze(pivots)), ...macroScenarios]
+    .sort((a, b) => b.probability - a.probability);
+
+  const ranked = enrichScenarios(combined, { price, structuralLevels });
   const lean = directionalLean(ranked);
   return { pivots, ranked, lean, price };
 }
