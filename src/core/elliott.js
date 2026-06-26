@@ -209,7 +209,9 @@ function tFlat(c) {
   if (dirA === 0) return null;
   const bRet = len(p[1], p[2]) / len(p[0], p[1]);
   if (bRet < 0.9 || bRet > 1.5) return null; // outside the flat B-wave range
-  const exceedsStart = dirA > 0 ? p[2].price > p[0].price : p[2].price < p[0].price;
+  // B exceeds A's start: for UP A, B's low (p[2]) went below A's starting low (p[0]);
+  // for DOWN A, B's high (p[2]) went above A's starting high (p[0]).
+  const exceedsStart = dirA > 0 ? p[2].price < p[0].price : p[2].price > p[0].price;
   const kind = bRet >= 1.05 || exceedsStart ? 'expanded' : 'regular';
   const tgt = targets(kind === 'expanded' ? [1.272, 1.618] : IDEAL.flatC,
     p[0].price, p[1].price, p[2].price);
@@ -231,7 +233,94 @@ function tFlat(c) {
   });
 }
 
-// T6: low-confidence baseline — trend simply continues the last leg.
+// T6: Running flat — B retraces > 100% of A (exceeds A's starting point), but C is
+// expected to fall SHORT of A's endpoint. This signals a very strong underlying trend:
+// the correction failed to fully develop, indicating the primary trend will resume powerfully.
+// C targets 38–79% of B rather than 100%+ of A (contrast with expanded flat).
+function tRunningFlat(c) {
+  if (c.length < 3) return null;
+  const p = c.slice(-3);
+  const dirA = sign(p[1].price - p[0].price);
+  if (dirA === 0) return null;
+  const aLen = len(p[0], p[1]);
+  const bLen = len(p[1], p[2]);
+  const bRet = bLen / aLen;
+  // B must exceed A's start (characteristic of running flat)
+  const bExceedsAStart = dirA > 0 ? p[2].price < p[0].price : p[2].price > p[0].price;
+  if (!bExceedsAStart) return null;
+  if (bRet > 3.0) return null; // implausibly large B
+  // C travels in the same direction as A but falls short — targets are fractions of B
+  const tgt = [0.382, 0.618, 0.786].map((r) => ({
+    label: `${r}× B`, ratio: r,
+    price: p[2].price + dirA * bLen * r,
+  }));
+  return scenario({
+    id: 'running-flat',
+    name: 'Running flat wave C',
+    pattern: 'correction',
+    bias: biasOf(dirA),
+    targets: tgt,
+    invalidation: p[2].price, // new B extreme means C hasn't started
+    guideline: fibCleanliness(bRet, [1.236, 1.382]),
+    prior: 0.3, // less common than regular/expanded flat
+    anchorPivots: p,
+    waveLabels: ['A', 'B', '→C'],
+    currentWave: 'Running flat C',
+    rationale:
+      `B retraced ${(bRet * 100).toFixed(0)}% of A and exceeded A's origin → running flat. ` +
+      `C expected at 38–79% of B (shorter than A), signalling a powerful underlying trend.`,
+  });
+}
+
+// T7: Contracting triangle — 5 alternating waves (A-B-C-D-E), each shorter than the
+// previous. Common in Wave 4 or Wave B. After E, price breaks out and resumes the
+// prior trend. Requires 6 confirmed pivots.
+function tContractingTriangle(c) {
+  if (c.length < 6) return null;
+  const p = c.slice(-6);
+  // Verify strict alternation of direction across all 5 legs
+  const legs5 = [];
+  for (let i = 1; i < 6; i++) legs5.push(p[i].price - p[i - 1].price);
+  for (let i = 1; i < legs5.length; i++) {
+    if (Math.sign(legs5[i]) === Math.sign(legs5[i - 1]) || legs5[i] === 0) return null;
+  }
+  const sizes = legs5.map(Math.abs);
+  // Each wave must not be longer than the previous (allow 10% buffer for noise)
+  for (let i = 1; i < sizes.length; i++) {
+    if (sizes[i] > sizes[i - 1] * 1.1) return null;
+  }
+  // At least two consecutive pairs must show clear contraction (< 90%)
+  const clearPairs = sizes.filter((s, i) => i > 0 && s < sizes[i - 1] * 0.9).length;
+  if (clearPairs < 2) return null;
+  // Breakout direction: opposite to the first wave (A), resuming the prior trend
+  const breakoutDir = -Math.sign(legs5[0]);
+  const aLen = sizes[0];
+  const tgt = [0.618, 1.0, 1.618].map((r) => ({
+    label: `${r}× A`, ratio: r,
+    price: p[5].price + breakoutDir * aLen * r,
+  }));
+  // Invalidation: D extreme — if broken by a new leg it's not a clean triangle
+  const dExtreme = p[4].price;
+  return scenario({
+    id: 'contracting-triangle',
+    name: 'Contracting triangle → breakout',
+    pattern: 'continuation',
+    bias: biasOf(breakoutDir),
+    targets: tgt,
+    invalidation: dExtreme,
+    guideline: fibCleanliness(sizes[1] / sizes[0], [0.618, 0.786]) * 0.5 +
+               fibCleanliness(sizes[2] / sizes[1], [0.618, 0.786]) * 0.5,
+    prior: 0.45,
+    anchorPivots: p,
+    waveLabels: ['0', 'A', 'B', 'C', 'D', 'E→'],
+    currentWave: 'Triangle breakout',
+    rationale:
+      `5-wave contracting triangle (A>B>C>D>E, ${clearPairs} clear contractions). ` +
+      `Breakout ${breakoutDir > 0 ? 'up' : 'down'} targeting 0.618–1.618× A from E.`,
+  });
+}
+
+// T8: low-confidence baseline — trend simply continues the last leg.
 function tContinuation(c, live) {
   if (c.length < 2) return null;
   const p = c.slice(-2);
@@ -257,7 +346,7 @@ function tContinuation(c, live) {
   });
 }
 
-const TEMPLATES = [tImpulseComplete, tWave3, tWave5, tZigzagC, tFlat, tContinuation];
+const TEMPLATES = [tImpulseComplete, tWave3, tWave5, tZigzagC, tFlat, tRunningFlat, tContractingTriangle, tContinuation];
 
 /**
  * Run every template against the pivot sequence and return raw scenarios.

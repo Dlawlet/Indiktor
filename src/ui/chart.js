@@ -92,6 +92,8 @@ export function createWaveChart(container) {
     },
 
     clearOverlays: clearOverlaysImpl,
+    drawChannel: drawChannelImpl,
+    setWaveLabels: setWaveLabelsImpl,
 
     clearWaveLabels() {
       candles.setMarkers(buildMarkers(_allPivots));

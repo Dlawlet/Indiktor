@@ -87,6 +87,15 @@ function renderActive() {
   waveChart.clearOverlays();
   waveChart.clearWaveLabels();
   r.ranked.slice(0, 3).forEach((s, i) => waveChart.drawScenario(s, i));
+  // Auto-show the primary scenario's channel (the "flag/tunnel") and wave labels
+  // so the structure is visible without having to click a card.
+  const top = r.ranked[0];
+  if (top?.anchorPivots?.length >= 3) {
+    waveChart.drawChannel(top.anchorPivots, waveChart.scenarioColor(0) + '50');
+  }
+  if (top?.anchorPivots && top?.waveLabels) {
+    waveChart.setWaveLabels(top.anchorPivots, top.waveLabels);
+  }
   waveChart.fit();
   renderLean(r.lean);
   renderScenarios(r.ranked);
