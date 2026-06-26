@@ -263,14 +263,14 @@ export function createWaveChart(container, dark = true) {
       if (s.anchorPivots && s.waveLabels) setWaveLabelsImpl(s.anchorPivots, s.waveLabels);
     },
 
-    drawGhostCandles(ghostData) {
-      if (!ghostData || ghostData.length === 0) return;
+    drawGhostCandles(ghostData, projectedPivots, scenarioColor) {
+      if (!ghostData?.length) return;
       if (ghostSeries) { chart.removeSeries(ghostSeries); ghostSeries = null; }
       ghostSeries = chart.addCandlestickSeries({
-        upColor:      'rgba(160,160,160,0.18)',
-        downColor:    'rgba(110,110,110,0.18)',
-        wickUpColor:  'rgba(160,160,160,0.32)',
-        wickDownColor:'rgba(110,110,110,0.32)',
+        upColor:        'rgba(160,160,160,0.18)',
+        downColor:      'rgba(110,110,110,0.18)',
+        wickUpColor:    'rgba(160,160,160,0.32)',
+        wickDownColor:  'rgba(110,110,110,0.32)',
         borderUpColor:  'rgba(160,160,160,0.45)',
         borderDownColor:'rgba(110,110,110,0.45)',
         priceLineVisible: false,
@@ -278,6 +278,36 @@ export function createWaveChart(container, dark = true) {
         crosshairMarkerVisible: false,
       });
       ghostSeries.setData(ghostData);
+
+      if (projectedPivots?.length) {
+        // Circle markers with wave labels at each projected turning point
+        ghostSeries.setMarkers(projectedPivots.map((pv) => ({
+          time: pv.time,
+          position: pv.dir === 'up' ? 'aboveBar' : 'belowBar',
+          color: scenarioColor ?? 'rgba(200,200,200,0.75)',
+          shape: 'circle',
+          text: pv.label,
+          size: 1,
+        })));
+
+        // Dashed schematic polyline: start → each projected pivot.
+        // Draws the "wave shape outline" so the pattern structure is visible
+        // even when ghost candles are faint.
+        const color = (scenarioColor ?? '#aaaaaa') + '99';
+        const schematic = chart.addLineSeries({
+          color,
+          lineWidth: 1,
+          lineStyle: LC.LineStyle.Dashed,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        schematic.setData([
+          { time: ghostData[0].time, value: ghostData[0].open },
+          ...projectedPivots.map((pv) => ({ time: pv.time, value: pv.price })),
+        ]);
+        projSeries.push(schematic);  // cleaned up by clearOverlays
+      }
     },
 
     drawPatternShape: (scenario, anchorPivots) => drawPatternShapeImpl(scenario, anchorPivots),

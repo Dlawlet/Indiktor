@@ -10,10 +10,11 @@ import { enrichScenarios } from './targets.js';
 // Higher timeframes carry more weight — they dominate the fractal structure.
 // 1m gets lower weight (0.5) since micro structure is noisier; 1000 candles ≈ 16.7 hours.
 export const TIMEFRAMES = [
-  { id: '1m', interval: '1m', limit: 1000, atrMult: 3, weight: 0.5 },
-  { id: '1h', interval: '1h', limit: 1000, atrMult: 3, weight: 2 },
-  { id: '4h', interval: '4h', limit: 1000, atrMult: 3, weight: 3 },
-  { id: '1d', interval: '1d', limit: 1000, atrMult: 3, weight: 4 },
+  { id: '1m',  interval: '1m',  limit: 1000, atrMult: 3, weight: 0.5 },
+  { id: '15m', interval: '15m', limit: 1000, atrMult: 3, weight: 1 },
+  { id: '1h',  interval: '1h',  limit: 1000, atrMult: 3, weight: 2 },
+  { id: '4h',  interval: '4h',  limit: 1000, atrMult: 3, weight: 3 },
+  { id: '1d',  interval: '1d',  limit: 1000, atrMult: 3, weight: 4 },
 ];
 
 /** Run the full engine chain on one timeframe's candles. */

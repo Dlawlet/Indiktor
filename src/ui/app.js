@@ -10,7 +10,7 @@ import { projectGhostCandles } from '../core/forecast.js';
 
 const symbol = () => el('asset').value;
 const THEME_KEY = 'wave-engine-theme';
-const INTERVAL_SECONDS = { '1m': 60, '1h': 3600, '4h': 14400, '1d': 86400 };
+const INTERVAL_SECONDS = { '1m': 60, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 };
 const feedbackStore = createStore();
 
 const el = (id) => document.getElementById(id);
@@ -108,7 +108,7 @@ function _drawExtras(r, scenario, idx) {
     const atr = computeATR(r.candles);
     const lastCandle = r.candles[r.candles.length - 1];
     const intervalSec = INTERVAL_SECONDS[activeTf] ?? 3600;
-    const ghostData = projectGhostCandles({
+    const { candles: ghostCandles, projectedPivots } = projectGhostCandles({
       scenario,
       anchorPivots: scenario.anchorPivots,
       currentPrice: lastCandle.close,
@@ -116,7 +116,7 @@ function _drawExtras(r, scenario, idx) {
       lastTime: lastCandle.time,
       intervalSec,
     });
-    waveChart.drawGhostCandles(ghostData);
+    waveChart.drawGhostCandles(ghostCandles, projectedPivots, waveChart.scenarioColor(idx));
   }
 }
 
