@@ -17,6 +17,32 @@ export const TIMEFRAMES = [
   { id: '1d',  interval: '1d',  limit: 1000, atrMult: 3, weight: 4 },
 ];
 
+// Patterns where the channel (base trendline + parallel) is a structural constraint.
+// Crossing the BASE line in the wrong direction breaks the pattern entirely.
+// Running-flat and expanded-flat are excluded: their B wave intentionally exceeds
+// the start, so a naive phase-check would fire false positives.
+const CHANNEL_INVALIDATABLE = new Set(['wave-3', 'wave-5', 'zigzag-c', 'continuation', 'double-zigzag']);
+
+/**
+ * Returns false if current price has broken the base trendline of the flag channel.
+ * Phase < 0 means price is on the wrong side of the A→C trendline, i.e. the
+ * candle has closed outside the channel in the invalidation direction.
+ */
+function channelIntact(scenario, currentTime, currentPrice) {
+  if (!CHANNEL_INVALIDATABLE.has(scenario.id)) return true;
+  const ap = scenario.anchorPivots;
+  if (!ap || ap.length < 3) return true;
+  const [a, b, c] = ap.slice(-3);
+  if (c.time <= a.time) return true;
+  const slope  = (c.price - a.price) / (c.time - a.time);
+  const lineAt = (t) => a.price + slope * (t - a.time);
+  const offset = b.price - lineAt(b.time);
+  if (Math.abs(offset) < 1e-8) return true;
+  const phase = (currentPrice - lineAt(currentTime)) / offset;
+  // 5% tolerance — a slight pierce doesn't count, a confirmed close outside does
+  return phase >= -0.05;
+}
+
 /** Run the full engine chain on one timeframe's candles. */
 export function runTimeframe(candles, { atrMult = 3, atrPeriod = 14 } = {}) {
   // Fine pass: short-term structure (the current active zigzag shown on chart)
@@ -57,8 +83,19 @@ export function runTimeframe(candles, { atrMult = 3, atrPeriod = 14 } = {}) {
   // apply a quality gate: a scenario must reach ≥ 65% of the top scenario's
   // share of the combined pool. Anything below that is noise relative to the
   // dominant read, not a genuine alternative.
-  const totalP = deduped.reduce((s, x) => s + x.probability, 0) || 1;
-  const renormed = deduped.map((s) => ({ ...s, probability: s.probability / totalP }));
+  const currentTime = candles.length ? candles[candles.length - 1].time : 0;
+
+  // Remove any channel-aware scenario whose flag has already been broken: if the
+  // last closed candle is on the wrong side of the base trendline, the pattern is
+  // invalidated regardless of how well it scored.
+  const channelValid = deduped.filter((s) => channelIntact(s, currentTime, price));
+
+  // Re-normalise across the unified pool so probabilities are comparable, then
+  // apply a quality gate: a scenario must reach ≥ 65% of the top scenario's
+  // share of the combined pool. Anything below that is noise relative to the
+  // dominant read, not a genuine alternative.
+  const totalP = channelValid.reduce((s, x) => s + x.probability, 0) || 1;
+  const renormed = channelValid.map((s) => ({ ...s, probability: s.probability / totalP }));
   const maxP = renormed.length ? renormed[0].probability : 0;
   const gated = renormed.filter((s) => s.probability >= maxP * 0.65);
 
