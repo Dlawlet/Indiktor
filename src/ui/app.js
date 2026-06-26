@@ -8,6 +8,7 @@ import { createStore } from '../feedback/store.js';
 import { createWaveChart } from './chart.js';
 
 const SYMBOL = 'BTCUSDT';
+const THEME_KEY = 'wave-engine-theme';
 const feedbackStore = createStore();
 
 const el = (id) => document.getElementById(id);
@@ -16,9 +17,19 @@ const pct = (n) => `${n >= 0 ? '+' : ''}${(n * 100).toFixed(1)}%`;
 const leanClass = (label) => (label === 'bullish' ? 'up' : label === 'bearish' ? 'down' : 'mixed');
 
 let waveChart;
-let results = {};      // tfId -> { tf, candles, pivots, ranked, lean, price }
+let results = {};
 let activeTf = '1d';
 let selectedIdx = null;
+let isDark = (localStorage.getItem(THEME_KEY) ?? 'dark') === 'dark';
+
+function applyTheme() {
+  document.body.classList.toggle('light', !isDark);
+  el('theme-toggle').textContent = isDark ? '☀' : '🌙';
+  if (waveChart) waveChart.setTheme(isDark);
+  localStorage.setItem(THEME_KEY, isDark ? 'dark' : 'light');
+}
+
+applyTheme();
 
 async function run() {
   const sensitivity = +el('sensitivity').value;
@@ -81,7 +92,7 @@ function renderTabs() {
 function renderActive() {
   const r = results[activeTf];
   if (!r) return;
-  if (!waveChart) waveChart = createWaveChart(el('chart'));
+  if (!waveChart) waveChart = createWaveChart(el('chart'), isDark);
   waveChart.setCandles(r.candles);
   waveChart.setZigzag(r.pivots);
   waveChart.clearOverlays();
@@ -200,6 +211,7 @@ function setStatus(msg, isError = false) {
   s.classList.toggle('error', isError);
 }
 
+el('theme-toggle').addEventListener('click', () => { isDark = !isDark; applyTheme(); });
 el('sensitivity').addEventListener('change', run);
 el('refresh').addEventListener('click', run);
 el('snapshot').addEventListener('click', snapshotActive);

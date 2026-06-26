@@ -13,6 +13,11 @@
       --green:#00ff88; --red:#ff3058; --text:#b8b8cc; --dim:#55556a;
       --border:rgba(240,165,0,0.15);
     }
+    body.light {
+      --bg:#f4f5fb; --bg2:#eceef8; --bg3:#e2e5f4; --amber:#c07800; --cyan:#0055bb;
+      --green:#007744; --red:#cc2244; --text:#1a1a3a; --dim:#6666aa;
+      --border:rgba(0,0,100,0.12);
+    }
     *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
     body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospace;min-height:100vh}
     header{display:flex;justify-content:space-between;align-items:center;padding:1rem 1.6rem;border-bottom:1px solid var(--border)}
@@ -111,6 +116,7 @@
           <option value="5">Coarse (5× ATR)</option>
         </select>
       </label>
+      <button id="theme-toggle" title="Toggle light / dark mode">☀</button>
       <button id="snapshot" title="Save the active timeframe's scenarios to review later">📸 SNAPSHOT</button>
       <button id="refresh">↻ REFRESH</button>
       <a class="navlink" href="review">REVIEW →</a>

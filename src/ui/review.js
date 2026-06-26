@@ -13,8 +13,18 @@ import { resolveSnapshot } from '../feedback/resolve.js';
 import { exportDataset, calibrate } from '../feedback/calibrate.js';
 import { fetchKlines } from '../core/data.js';
 
+const THEME_KEY = 'wave-engine-theme';
 const el = (id) => document.getElementById(id);
 const store = createStore();
+
+let isDark = (localStorage.getItem(THEME_KEY) ?? 'dark') === 'dark';
+function applyTheme() {
+  document.body.classList.toggle('light', !isDark);
+  el('theme-toggle').textContent = isDark ? '☀' : '🌙';
+  localStorage.setItem(THEME_KEY, isDark ? 'dark' : 'light');
+}
+applyTheme();
+el('theme-toggle').addEventListener('click', () => { isDark = !isDark; applyTheme(); });
 
 const fmt = (n) => (Number.isFinite(n) ? n.toLocaleString('en-US', { maximumFractionDigits: 2 }) : '—');
 const dt = (sec) => (Number.isFinite(sec) ? new Date(sec * 1000).toLocaleString() : '—');
