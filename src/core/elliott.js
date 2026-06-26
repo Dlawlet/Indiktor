@@ -525,24 +525,39 @@ function tContractingFlat(c) {
   });
 }
 
-const TEMPLATES = [tImpulseComplete, tWave3, tWave5, tZigzagC, tFlat, tRunningFlat, tExpandingFlat, tContractingFlat, tExpandingTriangle, tContractingTriangle, tDoubleZigzag, tContinuation];
+// Flat-family templates are separated so they can be run with the structural
+// multi-leg scanner (Pass 2 in analyze) in addition to the standard sliding window.
+const FLAT_FAMILY = [tFlat, tRunningFlat, tExpandingFlat, tContractingFlat];
+const TEMPLATES = [tImpulseComplete, tWave3, tWave5, tZigzagC, ...FLAT_FAMILY, tExpandingTriangle, tContractingTriangle, tDoubleZigzag, tContinuation];
 
 /**
  * Run every template against the pivot sequence and return raw scenarios.
  * scoring.js converts these into ranked probabilities.
  *
- * Sliding window: each template is tried at pivot offsets 0, 1, 2 (trimming
- * 0–2 confirmed pivots from the tail). This lets templates anchor on an
- * earlier wave start when sub-swings within A or B fill up slice(-3) with
- * micro-structure that hides the true A-B-C boundaries. The same scenario
- * anchored at different positions is deduplicated by (id, bias, A-start time);
- * older-anchored versions are discounted in guideline quality.
+ * Two-pass approach:
+ *
+ * Pass 1 — all templates, sliding offset window (existing):
+ *   Each template tries the last N confirmed pivots at offsets 0-2 so micro
+ *   sub-swings don't hide the true count.
+ *
+ * Pass 2 — flat family only, structural multi-leg scan (new):
+ *   The "right origin" for a flat is the DOMINANT structural swing, not just
+ *   the nearest adjacent pivot. We scan ALL valid (A-start, A-end, B-end)
+ *   triplets where:
+ *     - A-start and B-end share the same pivot TYPE (both H or both L)
+ *     - A-end is the opposite type — enforces proper A/B direction
+ *     - A spans 1–9 zigzag legs (covers fine through macro structures)
+ *     - B spans 1–5 zigzag legs
+ *   This mirrors how an analyst's eye finds a flat: identify the dominant
+ *   structural origin, confirm B stays within / breaks A's bounds, project C.
  */
 export function analyze(pivots, maxOffset = 2) {
   const confirmed = pivots.filter((p) => !p.tentative);
   const live = pivots[pivots.length - 1] ?? null;
   const seen = new Set();
   const scenarios = [];
+
+  // ── Pass 1: all templates, sliding offset window ──────────────────────────
   for (let offset = 0; offset <= maxOffset; offset++) {
     const view = offset === 0 ? confirmed : confirmed.slice(0, -offset);
     for (const t of TEMPLATES) {
@@ -551,11 +566,55 @@ export function analyze(pivots, maxOffset = 2) {
       const key = `${s.id}:${s.bias}:${s.anchorPivots?.[0]?.time ?? 0}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      // Slightly discount scenarios whose anchor is older — more recent windows
-      // are more relevant to the current price action.
       const disc = Math.pow(0.88, offset);
       scenarios.push(offset === 0 ? s : { ...s, guideline: Math.max(0, s.guideline * disc) });
     }
   }
+
+  // ── Pass 2: flat family, structural multi-leg origin scan ─────────────────
+  // For the current B-end pivot, find the SINGLE BEST (A-start, A-end, B-end)
+  // triplet per flat type × direction, judged by guideline quality.
+  // "Best" = highest guideline score — rewarded by the bRet being closest to
+  // ideal values, which naturally selects the most structurally clean origin.
+  const n = confirmed.length;
+  if (n >= 3) {
+    const bEnd = confirmed[n - 1];
+    // best["id:bias"] → the highest-guideline scenario found so far
+    const best = new Map();
+
+    for (let bSpan = 1; bSpan <= 5; bSpan++) {
+      const aEndIdx = n - 1 - bSpan;
+      if (aEndIdx < 1) break;
+      const aEnd = confirmed[aEndIdx];
+      // A-end must be opposite type to B-end
+      if (aEnd.type === bEnd.type) continue;
+
+      for (let aSpan = 1; aSpan <= 9; aSpan++) {
+        const aStartIdx = aEndIdx - aSpan;
+        if (aStartIdx < 0) break;
+        const aStart = confirmed[aStartIdx];
+        // A-start must match B-end type (H-L-H or L-H-L triplet)
+        if (aStart.type !== bEnd.type) continue;
+
+        const view3 = [aStart, aEnd, bEnd];
+        for (const t of FLAT_FAMILY) {
+          const s = t(view3, live);
+          if (!s) continue;
+          const mapKey = `${s.id}:${s.bias}`;
+          const prev = best.get(mapKey);
+          if (!prev || s.guideline > prev.guideline) best.set(mapKey, s);
+        }
+      }
+    }
+
+    // Emit best multi-stride scenarios, skipping anything Pass 1 already found
+    for (const s of best.values()) {
+      const key = `${s.id}:${s.bias}:${s.anchorPivots?.[0]?.time ?? 0}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      scenarios.push(s);
+    }
+  }
+
   return { pivots, confirmed, live, scenarios };
 }
