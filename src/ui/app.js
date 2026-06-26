@@ -20,6 +20,7 @@ let waveChart;
 let results = {};
 let activeTf = '1d';
 let selectedIdx = null;
+let lockedIdx = null;
 let isDark = (localStorage.getItem(THEME_KEY) ?? 'dark') === 'dark';
 
 function applyTheme() {
@@ -111,7 +112,17 @@ function renderActive() {
   waveChart.fit();
   renderLean(r.lean);
   renderScenarios(r.ranked);
-  renderWavePosition(null);
+  // Re-apply lock if one is set and the scenario still exists in this TF
+  if (lockedIdx != null && r.ranked[lockedIdx]) {
+    waveChart.highlightScenario(r.ranked[lockedIdx], lockedIdx);
+    renderWavePosition(r.ranked[lockedIdx]);
+  } else if (lockedIdx != null) {
+    // Locked scenario doesn't exist in this TF — show default but keep lock state
+    lockedIdx = null;
+    renderWavePosition(null);
+  } else {
+    renderWavePosition(null);
+  }
 }
 
 function renderLean(lean) {
@@ -136,6 +147,7 @@ function renderWavePosition(scenario) {
   node.innerHTML =
     `<span class="wave-pos-label">📍 ${scenario.currentWave ?? scenario.name}</span>` +
     `<span class="wave-pos-bias ${cls}">${arrow} ${scenario.bias.toUpperCase()}</span>` +
+    `${lockedIdx != null ? '<span class="wave-pos-badge">LOCKED</span>' : ''}` +
     `<span class="wave-pos-hint">click again to reset</span>`;
 }
 
@@ -160,6 +172,7 @@ function renderScenarios(ranked) {
           <span class="name">${s.name}</span>
           <span class="bias ${s.bias}">${s.bias === 'up' ? '▲' : '▼'} ${s.bias}</span>
           <span class="prob">${p}%</span>
+          <button class="lock-btn ${lockedIdx === i ? 'locked' : ''}" data-idx="${i}" title="Lock this scenario">${lockedIdx === i ? '🔒' : '🔓'}</button>
         </div>
         <div class="prob-bar"><i style="width:${p}%;background:${color}"></i></div>
         <div class="row"><span class="k">Switch / TP</span><span class="v">$${fmt(s.switchPrice)}${tpConf}</span></div>
@@ -192,6 +205,30 @@ function renderScenarios(ranked) {
       }
     });
   });
+
+  wrap.querySelectorAll('.lock-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const r = results[activeTf];
+      const idx = +btn.dataset.idx;
+      if (lockedIdx === idx) {
+        // Unlock: clear the lock and go back to default view
+        lockedIdx = null;
+        selectedIdx = null;
+        waveChart.clearOverlays();
+        waveChart.clearWaveLabels();
+        r.ranked.slice(0, 3).forEach((s, i) => waveChart.drawScenario(s, i));
+        renderWavePosition(null);
+      } else {
+        // Lock: highlight this scenario
+        lockedIdx = idx;
+        selectedIdx = idx;
+        waveChart.highlightScenario(r.ranked[idx], idx);
+        renderWavePosition(r.ranked[idx]);
+      }
+      renderScenarios(r.ranked); // re-render cards to update lock icons
+    });
+  });
 }
 
 async function snapshotActive() {
@@ -213,7 +250,7 @@ function setStatus(msg, isError = false) {
 }
 
 el('theme-toggle').addEventListener('click', () => { isDark = !isDark; applyTheme(); });
-el('asset').addEventListener('change', () => { results = {}; selectedIdx = null; run(); });
+el('asset').addEventListener('change', () => { results = {}; selectedIdx = null; lockedIdx = null; run(); });
 el('sensitivity').addEventListener('change', run);
 el('refresh').addEventListener('click', run);
 el('snapshot').addEventListener('click', snapshotActive);

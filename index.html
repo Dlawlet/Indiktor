@@ -98,6 +98,12 @@
     footer{padding:.8rem 1.6rem;font-size:.6rem;color:var(--dim);border-top:1px solid var(--border);line-height:1.6}
     #status{font-size:.62rem;color:var(--dim);padding:.4rem 1.6rem}
     #status.error{color:var(--red)}
+    .lock-btn{background:none;border:none;padding:.1rem .25rem;font-size:.75rem;
+      cursor:pointer;opacity:.4;transition:opacity .15s}
+    .lock-btn:hover,.lock-btn.locked{opacity:1;border:none}
+    button.lock-btn:hover{border:none !important;color:inherit}
+    .wave-pos-badge{font-size:.5rem;letter-spacing:.12em;padding:.1rem .35rem;
+      border:1px solid var(--amber);color:var(--amber);border-radius:2px}
   </style>
 </head>
 <body>
