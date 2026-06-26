@@ -133,18 +133,22 @@ function renderActive() {
   waveChart.clearOverlays();
   waveChart.clearWaveLabels();
   r.ranked.slice(0, 3).forEach((s, i) => waveChart.drawScenario(s, i));
-  // Auto-draw channel bounds for the top 3 scenarios so the flag zones are
-  // always visible without needing to click a card.
-  const channelOpacity = ['55', '38', '22'];
-  r.ranked.slice(0, 3).forEach((s, i) => {
-    if (s.anchorPivots?.length >= 3) {
-      waveChart.drawChannel(s.anchorPivots, waveChart.scenarioColor(i) + channelOpacity[i]);
-    }
-  });
   const top = r.ranked[0];
   if (top?.anchorPivots && top?.waveLabels) {
     waveChart.setWaveLabels(top.anchorPivots, top.waveLabels);
   }
+  // Draw channel bounds for top 3 scenarios, extended one full channel-length
+  // past the last known anchor so the flag zone projects forward visibly.
+  const lastCandle     = r.candles[r.candles.length - 1];
+  const intervalSec    = INTERVAL_SECONDS[activeTf] ?? 3600;
+  const channelOpacity = ['55', '38', '22'];
+  r.ranked.slice(0, 3).forEach((s, i) => {
+    if (s.anchorPivots?.length >= 3) {
+      const [a,,c] = s.anchorPivots.slice(-3);
+      const extendTo = Math.max(lastCandle.time, c.time) + (c.time - a.time);
+      waveChart.drawChannel(s.anchorPivots, waveChart.scenarioColor(i) + channelOpacity[i], extendTo);
+    }
+  });
   waveChart.fit();
   renderLean(r.lean);
   renderScenarios(r.ranked);

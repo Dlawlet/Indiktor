@@ -67,23 +67,29 @@ export function createWaveChart(container, dark = true) {
     candles.setMarkers(buildMarkers(T, _allPivots, _labelMap));
   }
 
-  function drawChannelImpl(anchorPivots, color) {
+  function drawChannelImpl(anchorPivots, color, extendToTime = null) {
     if (anchorPivots.length < 3) return;
     const [a, b, c] = anchorPivots.slice(-3);
     if (c.time <= a.time) return;
-    const slope = (c.price - a.price) / (c.time - a.time);
-    const paraAtA = b.price - slope * (b.time - a.time);
-    const paraAtC = b.price + slope * (c.time - b.time);
-    const addDiag = (v1, v2, style) => {
+    const slope  = (c.price - a.price) / (c.time - a.time);
+    const offset = b.price - (a.price + slope * (b.time - a.time)); // parallel shift
+    const baseAt = (t) => a.price + slope * (t - a.time);
+    const paraAt = (t) => baseAt(t) + offset;
+
+    // Extend the channel into the future so the projected path is visible.
+    // Default: one full channel length beyond point C (the current anchor edge).
+    const end = extendToTime ?? (c.time + (c.time - a.time));
+
+    const addLine = (t1, v1, t2, v2, style) => {
       const s = chart.addLineSeries({
         color, lineWidth: 1, lineStyle: style,
         priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
       });
-      s.setData([{ time: a.time, value: v1 }, { time: c.time, value: v2 }]);
+      s.setData([{ time: t1, value: v1 }, { time: t2, value: v2 }]);
       projSeries.push(s);
     };
-    addDiag(a.price, c.price, LC.LineStyle.Solid);
-    addDiag(paraAtA, paraAtC, LC.LineStyle.Dashed);
+    addLine(a.time, baseAt(a.time), end, baseAt(end), LC.LineStyle.Solid);
+    addLine(a.time, paraAt(a.time), end, paraAt(end), LC.LineStyle.Dashed);
   }
 
   function drawPatternShapeImpl(scenario, anchorPivots) {

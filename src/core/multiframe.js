@@ -36,13 +36,15 @@ export function runTimeframe(candles, { atrMult = 3, atrPeriod = 14 } = {}) {
     .slice(-14)
     .map((p) => ({ price: p.price, source: 'swing', weight: 1.5 }));
 
-  // Merge both degree scenarios, sort by probability descending
+  // Merge both degree scenarios, sort by probability descending.
+  // NOTE: each pass normalises its OWN pool independently, so the two probability
+  // scales are not directly comparable after merging — we must re-normalise.
   const combined = [...rankScenarios(analyze(pivots)), ...macroScenarios]
     .sort((a, b) => b.probability - a.probability);
 
-  // Deduplicate: same pattern + direction from different degree passes is not
-  // additional evidence — it's the same read at two zoom levels. Since the list
-  // is already sorted, the first occurrence of each key is the highest-probability one.
+  // Deduplicate: same pattern + direction from two different degree passes is the
+  // same read at two zoom levels, not independent evidence. First occurrence wins
+  // (highest probability since the list is already sorted descending).
   const seenKeys = new Set();
   const deduped = combined.filter((s) => {
     const key = `${s.id}:${s.bias}`;
@@ -50,11 +52,18 @@ export function runTimeframe(candles, { atrMult = 3, atrPeriod = 14 } = {}) {
     seenKeys.add(key);
     return true;
   });
-  // No hard cap here. rankScenarios already filtered to scenarios scoring ≥ 40%
-  // of the best raw weight. If more than 3 survive that bar the data is genuinely
-  // ambiguous and tightening the EW templates is the right fix, not slicing the list.
 
-  const ranked = enrichScenarios(deduped, { price, structuralLevels });
+  // Re-normalise across the unified pool so probabilities are comparable, then
+  // apply the same quality gate as rankScenarios uses internally (≥ 50 % of the
+  // best scenario's share). This is the ACTUAL anti-noise filter — the within-pass
+  // filter in scoring.js only handles one pool at a time and cannot prevent the
+  // merged list from blowing up.
+  const totalP = deduped.reduce((s, x) => s + x.probability, 0) || 1;
+  const renormed = deduped.map((s) => ({ ...s, probability: s.probability / totalP }));
+  const maxP = renormed.length ? renormed[0].probability : 0;
+  const gated = renormed.filter((s) => s.probability >= maxP * 0.50);
+
+  const ranked = enrichScenarios(gated, { price, structuralLevels });
   const lean = directionalLean(ranked);
   return { pivots, ranked, lean, price };
 }
