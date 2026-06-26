@@ -32,7 +32,7 @@ export function createWaveChart(container, dark = true) {
     layout: { background: { color: T.bg }, textColor: T.text, fontFamily: 'JetBrains Mono, monospace' },
     grid: { vertLines: { color: T.grid }, horzLines: { color: T.grid } },
     rightPriceScale: { borderColor: T.border },
-    timeScale: { borderColor: T.border, timeVisible: false },
+    timeScale: { borderColor: T.border, timeVisible: true, secondsVisible: false },
     crosshair: { mode: LC.CrosshairMode.Normal },
     autoSize: true,
   });

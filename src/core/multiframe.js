@@ -54,14 +54,13 @@ export function runTimeframe(candles, { atrMult = 3, atrPeriod = 14 } = {}) {
   });
 
   // Re-normalise across the unified pool so probabilities are comparable, then
-  // apply the same quality gate as rankScenarios uses internally (≥ 50 % of the
-  // best scenario's share). This is the ACTUAL anti-noise filter — the within-pass
-  // filter in scoring.js only handles one pool at a time and cannot prevent the
-  // merged list from blowing up.
+  // apply a quality gate: a scenario must reach ≥ 65% of the top scenario's
+  // share of the combined pool. Anything below that is noise relative to the
+  // dominant read, not a genuine alternative.
   const totalP = deduped.reduce((s, x) => s + x.probability, 0) || 1;
   const renormed = deduped.map((s) => ({ ...s, probability: s.probability / totalP }));
   const maxP = renormed.length ? renormed[0].probability : 0;
-  const gated = renormed.filter((s) => s.probability >= maxP * 0.50);
+  const gated = renormed.filter((s) => s.probability >= maxP * 0.65);
 
   const ranked = enrichScenarios(gated, { price, structuralLevels });
   const lean = directionalLean(ranked);
