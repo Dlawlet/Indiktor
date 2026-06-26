@@ -36,11 +36,22 @@ export function runTimeframe(candles, { atrMult = 3, atrPeriod = 14 } = {}) {
     .slice(-14)
     .map((p) => ({ price: p.price, source: 'swing', weight: 1.5 }));
 
-  // Merge both degree scenarios, re-sort by probability
+  // Merge both degree scenarios, sort by probability descending
   const combined = [...rankScenarios(analyze(pivots)), ...macroScenarios]
     .sort((a, b) => b.probability - a.probability);
 
-  const ranked = enrichScenarios(combined, { price, structuralLevels });
+  // Deduplicate: same pattern + direction from different degree passes is not
+  // additional evidence — it's the same read at two zoom levels. Since the list
+  // is already sorted, the first occurrence of each key is the highest-probability one.
+  const seenKeys = new Set();
+  const deduped = combined.filter((s) => {
+    const key = `${s.id}:${s.bias}`;
+    if (seenKeys.has(key)) return false;
+    seenKeys.add(key);
+    return true;
+  }).slice(0, 3);  // hard cap: more than 3 signals noise, not conviction
+
+  const ranked = enrichScenarios(deduped, { price, structuralLevels });
   const lean = directionalLean(ranked);
   return { pivots, ranked, lean, price };
 }
