@@ -60,8 +60,9 @@ export function createWaveChart(container, dark = true) {
   let flatPriceLines = [];
   let liveSeries = [];      // in-progress flat overlay
   let livePriceLines = [];
-  let ghostSeries = null;
-  let predSeries    = [];     // predictive hypothesis overlays
+  let ghostSeries     = null;
+  let ghostProjSeries = [];   // schematic lines owned by drawGhostCandles
+  let predSeries      = [];   // predictive hypothesis overlays
   let predPriceLines = [];
   let _predMarkers  = [];
   let _allPivots = [];
@@ -109,7 +110,7 @@ export function createWaveChart(container, dark = true) {
     priceLines = [];
     projSeries.forEach((s) => chart.removeSeries(s));
     projSeries = [];
-    if (ghostSeries) { chart.removeSeries(ghostSeries); ghostSeries = null; }
+    // ghostSeries is managed separately — clearGhostCandles() owns it
   }
 
   function setWaveLabelsImpl(anchorPivots, waveLabels) {
@@ -459,8 +460,10 @@ export function createWaveChart(container, dark = true) {
     },
 
     drawGhostCandles(ghostData, projectedPivots, scenarioColor) {
-      if (!ghostData?.length) return;
       if (ghostSeries) { chart.removeSeries(ghostSeries); ghostSeries = null; }
+      ghostProjSeries.forEach(s => chart.removeSeries(s));
+      ghostProjSeries = [];
+      if (!ghostData?.length) return;
       ghostSeries = chart.addCandlestickSeries({
         upColor:        'rgba(160,160,160,0.18)',
         downColor:      'rgba(110,110,110,0.18)',
@@ -501,7 +504,7 @@ export function createWaveChart(container, dark = true) {
           { time: ghostData[0].time, value: ghostData[0].open },
           ...projectedPivots.map((pv) => ({ time: pv.time, value: pv.price })),
         ]);
-        projSeries.push(schematic);  // cleaned up by clearOverlays
+        ghostProjSeries.push(schematic);
       }
     },
 
@@ -706,6 +709,19 @@ export function createWaveChart(container, dark = true) {
     },
 
     fit() { chart.timeScale().fitContent(); },
+
+    clearGhostCandles() {
+      if (ghostSeries) { chart.removeSeries(ghostSeries); ghostSeries = null; }
+      ghostProjSeries.forEach(s => chart.removeSeries(s));
+      ghostProjSeries = [];
+    },
+
+    extendRightEdge(maxTime) {
+      const visible = chart.timeScale().getVisibleRange();
+      if (visible && maxTime > visible.to) {
+        chart.timeScale().setVisibleRange({ from: visible.from, to: maxTime + 1 });
+      }
+    },
 
     // ── Predictive hypothesis overlays ───────────────────────────────────────
 

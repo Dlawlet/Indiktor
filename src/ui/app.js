@@ -4,6 +4,8 @@ import { createWaveChart } from './chart.js';
 import { detectFlatPatterns, detectLiveFlat, FLAT_COLORS, FLAT_LABELS } from '../core/flats.js';
 import { enumerateHypotheses, rankAndBeam } from '../core/predict.js';
 import { withTiming } from '../core/timing.js';
+import { takeSnapshot, evaluateSnapshot, computeMetrics } from '../core/snapshot.js';
+import { generateGhostCandles } from '../core/ghost.js';
 
 const TIMEFRAMES = ['1m', '15m', '1h', '4h', '1d'];
 const TF_LIMIT   = 500;
@@ -22,6 +24,13 @@ let annotPoints = [];
 let cache = {};           // { [tf]: { candles, pivots, patterns, live, hyps } }
 let selectedIdx    = null;
 let selectedHypIdx = null;
+let pinnedHyp      = null;  // { ghostData:{candles,pivots}, color, hypIdx, tf } | null
+let lastMetrics    = null;  // last computeMetrics result — refreshed each run()
+
+function redrawPinnedGhost() {
+  if (!pinnedHyp || !waveChart) return;
+  waveChart.drawGhostCandles(pinnedHyp.ghostData.candles, pinnedHyp.ghostData.pivots, pinnedHyp.color + '88');
+}
 
 // Prediction scenario colors (match chart.js DARK.scenario)
 const PRED_COLORS = ['#00d4ff', '#b388ff', '#ffcc44', '#ff7744'];
@@ -31,6 +40,52 @@ const STAGE_LABEL = {
   formingC:    'C EN COURS',
   'awaiting2°': 'ATTEND. 2°',
 };
+
+// ── Snapshot persistence ──────────────────────────────────────────────────────
+const SNAP_KEY      = 'pred-snaps-v1';
+const SNAP_INTERVAL = 2 * 60 * 60 * 1000;  // 2h
+const MAX_SNAPS     = 60;
+
+function loadSnaps() {
+  try { return JSON.parse(localStorage.getItem(SNAP_KEY) ?? '[]'); }
+  catch { return []; }
+}
+
+function saveSnaps(list) {
+  localStorage.setItem(SNAP_KEY, JSON.stringify(list.slice(-MAX_SNAPS)));
+}
+
+function autoEvaluate(currentPrice) {
+  const snaps = loadSnaps();
+  if (!snaps.length) return null;
+  const updated = snaps.map(s =>
+    (s.outcome != null && s.outcome !== 'pending') ? s : evaluateSnapshot(s, currentPrice)
+  );
+  saveSnaps(updated);
+  return computeMetrics(updated);
+}
+
+function maybyCaptureSnap(hyps, livePrice) {
+  if (!hyps?.length) return;
+  const snaps = loadSnaps();
+  const now   = Date.now();
+  const last  = snaps[snaps.length - 1];
+  if (last && now - last.timestamp < SNAP_INTERVAL) return;
+  snaps.push(takeSnapshot(hyps, livePrice, {
+    timestamp: now,
+    id:        `${sym()}_${activeTf}_${now}`,
+    params:    { sensitivity: +el('sensitivity').value, minConf: +el('min-conf').value, asset: sym(), tf: activeTf },
+  }));
+  saveSnaps(snaps);
+}
+
+function buildMetricsStr(metrics) {
+  if (!metrics || metrics.total === 0) return 'En attente du 1er snapshot (2h)';
+  const accStr = metrics.accuracy != null
+    ? ` · ${(metrics.accuracy * 100).toFixed(0)}% acc`
+    : '';
+  return `${metrics.total} snap · ✓ ${metrics.hit} · ✗ ${metrics.miss} · ⏳ ${metrics.pending}${accStr}`;
+}
 
 // ── Thème ────────────────────────────────────────────────────────────────────
 
@@ -70,6 +125,9 @@ async function run() {
   hyps = withTiming(hyps, currentBar);
   hyps = rankAndBeam(hyps, 4);
 
+  lastMetrics = autoEvaluate(livePrice);
+  maybyCaptureSnap(hyps, livePrice);
+
   cache[activeTf] = { candles, pivots, patterns, live, hyps };
 
   if (!waveChart) waveChart = createWaveChart(el('chart'), isDark);
@@ -80,6 +138,7 @@ async function run() {
   waveChart.drawFlatPatterns(patterns);
   if (live) waveChart.drawLiveFlat(live);
   waveChart.fit();
+  redrawPinnedGhost();
 
   selectedIdx    = null;
   selectedHypIdx = null;
@@ -131,14 +190,14 @@ function renderPatternList(patterns, live, hyps = []) {
   if (hyps?.length) {
     html += '<div class="section-label">PRÉDICTIONS</div>';
     hyps.forEach((h, i) => {
-      const col    = PRED_COLORS[i % PRED_COLORS.length];
-      const arrow  = h.bias === 'bull' ? '▲' : '▼';
-      const conf   = (h.confidence.value * 100).toFixed(0);
-      const stLbl  = STAGE_LABEL[h.stage] ?? h.stage;
-      const branch = h.typeBranch?.join(' · ') ?? '—';
-      const sel    = selectedHypIdx === i;
+      const col      = PRED_COLORS[i % PRED_COLORS.length];
+      const arrow    = h.bias === 'bull' ? '▲' : '▼';
+      const conf     = (h.confidence.value * 100).toFixed(0);
+      const stLbl    = STAGE_LABEL[h.stage] ?? h.stage;
+      const branch   = h.typeBranch?.join(' · ') ?? '—';
+      const sel      = selectedHypIdx === i;
+      const isPinned = pinnedHyp?.hypIdx === i && pinnedHyp?.tf === activeTf;
 
-      // Show the next price target (completion zone hi/lo, or TP)
       let targetLine = '';
       const soft = h.zones?.invalidation?.soft;
       const tp   = h.zones?.tp;
@@ -151,10 +210,11 @@ function renderPatternList(patterns, live, hyps = []) {
       }
 
       html += `
-        <div class="pcard pred${sel ? ' selected' : ''}" style="--accent:${col}" data-hyp="${i}">
+        <div class="pcard pred${sel ? ' selected' : ''}${isPinned ? ' pinned' : ''}" style="--accent:${col}" data-hyp="${i}">
           <div class="pcard-head">
             <span class="live-badge" style="background:${col}22;color:${col}">${stLbl}</span>
             <span class="pbias ${h.bias}">${arrow} ${h.bias}</span>
+            <button class="pin-btn${isPinned ? ' on' : ''}" data-pin="${i}" title="${isPinned ? 'Défixer' : 'Fixer l\'estimation'}">📌</button>
           </div>
           <div class="prow"><span class="pk">Type</span><span class="pv">${branch}</span></div>
           <div class="prob-bar"><i style="width:${conf}%;background:${col}"></i></div>
@@ -162,6 +222,7 @@ function renderPatternList(patterns, live, hyps = []) {
           ${targetLine}
         </div>`;
     });
+    html += `<div class="pred-metrics">${buildMetricsStr(lastMetrics)}</div>`;
   }
 
   // ── HISTORIQUE ────────────────────────────────────────────────────────────────
@@ -194,7 +255,8 @@ function renderPatternList(patterns, live, hyps = []) {
 
   // Click: predictive hypothesis card
   wrap.querySelectorAll('.pcard[data-hyp]').forEach(card => {
-    card.addEventListener('click', () => {
+    card.addEventListener('click', (e) => {
+      if (e.target.classList.contains('pin-btn')) return;
       const data = cache[activeTf];
       if (!data) return;
       const i   = +card.dataset.hyp;
@@ -202,16 +264,46 @@ function renderPatternList(patterns, live, hyps = []) {
       if (!hyp) return;
 
       if (selectedHypIdx === i) {
-        // Deselect
         selectedHypIdx = null;
         waveChart.clearPredictions();
+        redrawPinnedGhost();
       } else {
         selectedHypIdx = i;
-        selectedIdx = null;          // deselect any historical pattern
+        selectedIdx    = null;
         waveChart.clearFlatPatterns();
         waveChart.drawFlatPatterns(data.patterns);
         if (data.live) waveChart.drawLiveFlat(data.live);
-        waveChart.drawPrediction(hyp, PRED_COLORS[i % PRED_COLORS.length]);
+        const color = PRED_COLORS[i % PRED_COLORS.length];
+        waveChart.drawPrediction(hyp, color);
+        const lp    = data.candles[data.candles.length - 1].close;
+        const ghost = generateGhostCandles(hyp, lp, data.candles);
+        waveChart.drawGhostCandles(ghost.candles, ghost.pivots, color);
+        if (ghost.candles.length) waveChart.extendRightEdge(ghost.candles[ghost.candles.length - 1].time);
+      }
+      renderPatternList(data.patterns, data.live, data.hyps);
+    });
+  });
+
+  // Click: pin button (freeze ghost candles across refreshes)
+  wrap.querySelectorAll('.pin-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const data = cache[activeTf];
+      if (!data) return;
+      const i     = +btn.dataset.pin;
+      const hyp   = data.hyps?.[i];
+      if (!hyp) return;
+      const color = PRED_COLORS[i % PRED_COLORS.length];
+
+      if (pinnedHyp?.hypIdx === i && pinnedHyp?.tf === activeTf) {
+        pinnedHyp = null;
+        waveChart.clearGhostCandles();
+      } else {
+        const lp        = data.candles[data.candles.length - 1].close;
+        const ghostData = generateGhostCandles(hyp, lp, data.candles);
+        pinnedHyp = { ghostData, color, hypIdx: i, tf: activeTf };
+        waveChart.drawGhostCandles(ghostData.candles, ghostData.pivots, color + '88');
+        if (ghostData.candles.length) waveChart.extendRightEdge(ghostData.candles[ghostData.candles.length - 1].time);
       }
       renderPatternList(data.patterns, data.live, data.hyps);
     });
@@ -228,11 +320,13 @@ function renderPatternList(patterns, live, hyps = []) {
         waveChart.clearFlatPatterns();
         waveChart.drawFlatPatterns(data.patterns);
         if (data.live) waveChart.drawLiveFlat(data.live);
+        redrawPinnedGhost();
       } else {
         selectedIdx    = idx;
-        selectedHypIdx = null;       // deselect any prediction
+        selectedHypIdx = null;
         waveChart.clearPredictions();
         waveChart.highlightFlat(data.patterns, idx);
+        redrawPinnedGhost();
       }
       renderPatternList(data.patterns, data.live, data.hyps);
     });
