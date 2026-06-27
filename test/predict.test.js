@@ -1,9 +1,12 @@
-// Tests — Phase 6a predictive engine.
-// Validates band inversion (P.2), TP measured move (P.3), and hypothesis
-// enumeration (P.1).  All arithmetic is checked against manual derivations.
+// Tests — Phase 6a/6b predictive engine.
+// Validates band inversion (P.2), TP measured move (P.3), hypothesis
+// enumeration (P.1), merge + beam (P.7).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { enumerateHypotheses, invertBands, measuredMoveTP, predictiveConfidence } from '../src/core/predict.js';
+import {
+  enumerateHypotheses, invertBands, measuredMoveTP, predictiveConfidence,
+  mergeOverlapping, beam, rankAndBeam,
+} from '../src/core/predict.js';
 
 // Minimal pivot factory
 const pv = (price, type = 'L') => ({ price, type, time: price, close: price, atr: null, index: 0 });
@@ -237,4 +240,136 @@ test('predictiveConfidence: all 4 components present in output', () => {
   assert.ok('partial_band_fit'    in conf.components, 'missing partial_band_fit');
   assert.ok('channel_cleanliness' in conf.components, 'missing channel_cleanliness');
   assert.ok('fractal_consistency' in conf.components, 'missing fractal_consistency');
+});
+
+test('predictiveConfidence: awaiting2° uses full 3-ratio bandFit (higher than rB-only)', () => {
+  // O=100,A=150,B=106,C=158 → regular flat, rB=0.88, pC=0.16, lenC≈1.04 (near ideal)
+  const hyp2 = {
+    stage: 'awaiting2°', bias: 'bull',
+    typeBranch: ['regular', 'contracting'],
+    anchor: { preO: pv(200,'H'), O: pv(100,'L'), A: pv(150,'H'), B: pv(106,'L'), C: pv(158,'H') },
+    legA: 50, rB: 0.88,
+  };
+  const hypC = makeHypFormingC();
+  const conf2  = predictiveConfidence(hyp2).value;
+  const confC  = predictiveConfidence(hypC).value;
+  // awaiting2° stage_maturity (0.85) × full bandFit > formingC (0.65) × rB-only bandFit
+  assert.ok(conf2 > confC,
+    `awaiting2° (${conf2.toFixed(3)}) should outrank formingC (${confC.toFixed(3)})`);
+});
+
+// ── Phase 6b: beam + merge ────────────────────────────────────────────────────
+
+// Helper: build a minimal hypothesis with a given confidence and completion zone
+function mkHyp(confVal, zLo, zHi, bias = 'bull', stage = 'formingC') {
+  return {
+    stage, bias,
+    typeBranch: ['regular'],
+    anchor: { preO: pv(200), O: pv(100), A: pv(150), B: pv(106), C: null },
+    legA: 50, rB: 0.88,
+    zones: {
+      completion: { regular: [zLo, zHi] },
+      invalidation: { hard_1deg: 200, soft: [zLo - 10, zHi + 10] },
+      tp: [6, 106],
+    },
+    confidence: { value: confVal, components: {} },
+  };
+}
+
+test('beam: never returns more than k results', () => {
+  const hyps = Array.from({ length: 10 }, (_, i) => mkHyp(i * 0.1, 150 + i, 165 + i));
+  assert.ok(beam(hyps, 4).length <= 4, 'beam should cap at k=4');
+});
+
+test('beam: results are sorted by confidence descending', () => {
+  const hyps = [mkHyp(0.3, 150, 165), mkHyp(0.8, 155, 170), mkHyp(0.5, 152, 167)];
+  const b = beam(hyps, 4);
+  for (let i = 1; i < b.length; i++) {
+    assert.ok(b[i - 1].confidence.value >= b[i].confidence.value,
+      'beam output must be sorted descending');
+  }
+});
+
+test('beam: returns fewer than k when input is smaller', () => {
+  const hyps = [mkHyp(0.6, 150, 165)];
+  assert.equal(beam(hyps, 4).length, 1, 'should return all when < k');
+});
+
+test('mergeOverlapping: fully-overlapping zones collapse to 1 scenario', () => {
+  // Two hyps with identical zones — same scenario
+  const h1 = mkHyp(0.7, 150, 165);
+  const h2 = mkHyp(0.5, 150, 165);
+  const merged = mergeOverlapping([h1, h2]);
+  assert.equal(merged.length, 1, 'identical zones should merge');
+});
+
+test('mergeOverlapping: heavily-overlapping zones collapse to 1 scenario', () => {
+  // [152, 163] overlaps [150, 165] with Jaccard = 11/15 ≈ 0.73 > 0.50 threshold
+  const h1 = mkHyp(0.7, 150, 165);
+  const h2 = mkHyp(0.5, 152, 163);
+  const merged = mergeOverlapping([h1, h2]);
+  assert.equal(merged.length, 1, 'heavily overlapping zones should merge');
+});
+
+test('mergeOverlapping: non-overlapping zones stay separate', () => {
+  // [150, 155] vs [170, 180] — no overlap
+  const h1 = mkHyp(0.7, 150, 155);
+  const h2 = mkHyp(0.5, 170, 180);
+  const merged = mergeOverlapping([h1, h2]);
+  assert.equal(merged.length, 2, 'non-overlapping zones must remain distinct');
+});
+
+test('mergeOverlapping: different bias never merges even with identical zones', () => {
+  const h1 = mkHyp(0.7, 150, 165, 'bull');
+  const h2 = mkHyp(0.5, 150, 165, 'bear');
+  const merged = mergeOverlapping([h1, h2]);
+  assert.equal(merged.length, 2, 'bull and bear scenarios must never merge');
+});
+
+test('mergeOverlapping: primary keeps highest confidence after merge', () => {
+  const h1 = mkHyp(0.5, 150, 165);  // lower confidence
+  const h2 = mkHyp(0.8, 152, 164);  // higher confidence — should be primary
+  const merged = mergeOverlapping([h1, h2]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].confidence.value, 0.8, 'merged scenario should have highest confidence');
+});
+
+test('mergeOverlapping: unions type branches from both hypotheses', () => {
+  const h1 = { ...mkHyp(0.7, 150, 165), typeBranch: ['regular'] };
+  const h2 = { ...mkHyp(0.5, 152, 163), typeBranch: ['contracting'] };
+  const merged = mergeOverlapping([h1, h2]);
+  assert.equal(merged.length, 1);
+  assert.ok(merged[0].typeBranch.includes('regular'),     'should include regular');
+  assert.ok(merged[0].typeBranch.includes('contracting'), 'should include contracting');
+});
+
+test('rankAndBeam: > 4 input hypotheses → exactly ≤ 4 output', () => {
+  const hyps = Array.from({ length: 8 }, (_, i) => mkHyp(i * 0.1, 140 + i * 5, 155 + i * 5));
+  const result = rankAndBeam(hyps, 4);
+  assert.ok(result.length <= 4, 'rankAndBeam must cap at k=4');
+});
+
+test('rankAndBeam: output contains the highest-confidence scenarios', () => {
+  const low  = mkHyp(0.20, 150, 155);
+  const high = mkHyp(0.90, 200, 210);  // non-overlapping, distinct scenario
+  const mid  = mkHyp(0.50, 170, 180);
+  const result = rankAndBeam([low, high, mid], 2);
+  assert.equal(result.length, 2);
+  assert.equal(result[0].confidence.value, 0.90, 'highest confidence should be first');
+  assert.equal(result[1].confidence.value, 0.50, 'second should be mid confidence');
+});
+
+test('rankAndBeam: confidence monotone across stages for same O/A geometry', () => {
+  // Same O/A, with B adding formingC and C adding awaiting2°
+  const pivots5 = [pv(200,'H'), pv(100,'L'), pv(150,'H'), pv(106,'L'), pv(158,'H')];
+  const hyps    = enumerateHypotheses(pivots5, 155);
+  const ranked  = rankAndBeam(hyps, 4);
+  // The most advanced stage (awaiting2°) should rank above formingC, above formingB
+  // Keep the highest-confidence entry per stage (beam is sorted, so first wins)
+  const byStage = {};
+  for (const h of ranked) {
+    if (byStage[h.stage] == null) byStage[h.stage] = h.confidence.value;
+  }
+  if (byStage.formingB   != null && byStage.formingC      != null) assert.ok(byStage.formingC      > byStage.formingB);
+  if (byStage.formingC   != null && byStage['awaiting2°'] != null) assert.ok(byStage['awaiting2°'] > byStage.formingC);
 });

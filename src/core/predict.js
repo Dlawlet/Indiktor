@@ -1,4 +1,4 @@
-// Predictive engine — Phase 6a.
+// Predictive engine — Phase 6a/6b.
 //
 // Principle: we do NOT invent new arithmetic — we INVERT the post-mortem one.
 // Post-mortem reads ratios from known prices; predictive fixes the bands and
@@ -9,7 +9,7 @@
 //   2. Price zones (completion / invalidation / TP)  ← the hard deliverable
 //   3. Timing (soft, statistical, never a gate)
 
-import { BANDS, membership } from './flats.js';
+import { BANDS, membership, computeRatios, bandFit } from './flats.js';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -135,9 +135,25 @@ const STAGE_MATURITY = {
 };
 
 function partialBandFit(hyp) {
-  const { stage, typeBranch, rB } = hyp;
+  const { stage, typeBranch, anchor, rB } = hyp;
+  const { O, A, B, C } = anchor;
+
   if (stage === 'formingB' || rB == null) return 0.5;  // no ratio confirmed yet
-  // rB is confirmed at formingC and awaiting2° → score it against each branch type
+
+  // awaiting2°: O, A, B, C all confirmed → use the full 3-ratio bandFit
+  if (stage === 'awaiting2°' && C) {
+    const ratios = computeRatios(O, A, B, C);
+    if (ratios) {
+      let best = 0;
+      for (const t of (typeBranch ?? Object.keys(BANDS))) {
+        const f = bandFit(ratios, t);
+        if (f > best) best = f;
+      }
+      return best;
+    }
+  }
+
+  // formingC: only rB is confirmed → score on rB membership alone
   let best = 0;
   for (const t of (typeBranch ?? Object.keys(BANDS))) {
     const f = membership(rB, ...BANDS[t].rB);
@@ -148,13 +164,23 @@ function partialBandFit(hyp) {
 
 function channelCleanliness(hyp) {
   const { anchor, legA } = hyp;
-  const { A, B } = anchor;
-  if (!A || !B) return 0.6;
-  // Ratio |AB| / |legA|: for a healthy flat, the B-leg is 50–130% of the A-leg.
-  // Extremes (tiny retracement or massive overshoot) are less clean.
+  const { O, A, B } = anchor;
+  if (!A) return 0.6;
+
+  // A must be the true extremum between O and B (alternation sanity check).
+  if (B) {
+    const aIsExtremum = legA > 0
+      ? A.price > O.price && A.price > B.price   // bull: A is a high
+      : A.price < O.price && A.price < B.price;  // bear: A is a low
+    if (!aIsExtremum) return 0.10;
+  } else {
+    return 0.60;  // formingB — not enough structure to judge
+  }
+
+  // |AB| / |legA| should sit in [0.5, 1.5] for a healthy flat.
   const ratio = Math.abs(B.price - A.price) / (Math.abs(legA) + 1e-10);
-  if (ratio >= 0.5 && ratio <= 1.5) return 0.8 + 0.2 * (1 - Math.abs(ratio - 1));
-  return Math.max(0.15, 0.8 - 0.4 * Math.abs(ratio - 1));
+  if (ratio >= 0.5 && ratio <= 1.5) return 0.70 + 0.30 * (1 - Math.abs(ratio - 1));
+  return Math.max(0.15, 0.70 - 0.50 * Math.abs(ratio - 1));
 }
 
 export function predictiveConfidence(hyp) {
@@ -172,6 +198,81 @@ export function predictiveConfidence(hyp) {
       fractal_consistency:  fractal,
     },
   };
+}
+
+// ── P.7  Beam + merge (Phase 6b) ─────────────────────────────────────────────
+//
+// mergeOverlapping: hypotheses whose completion zones overlap ≥ threshold
+//   (Jaccard on the union zone) AND share the same bias are treated as the
+//   same scenario and collapsed. The higher-confidence one is the primary;
+//   the type branches are unioned. Hypotheses without a completion zone
+//   (awaiting2°) are compared on their TP zones instead.
+//
+// beam: sort by confidence.value descending, keep top-k.
+//
+// rankAndBeam: merge then beam — the single entry point for consumers.
+
+function unionZone(hyp) {
+  const compl = hyp.zones?.completion;
+  if (compl) {
+    const all = Object.values(compl).filter(Boolean).flat();
+    return all.length ? [Math.min(...all), Math.max(...all)] : null;
+  }
+  return hyp.zones?.tp ?? null;  // fallback for awaiting2°
+}
+
+function jaccard([lo1, hi1], [lo2, hi2]) {
+  const overLo = Math.max(lo1, lo2);
+  const overHi = Math.min(hi1, hi2);
+  if (overLo >= overHi) return 0;
+  const union = Math.max(hi1, hi2) - Math.min(lo1, lo2);
+  return union <= 0 ? 0 : (overHi - overLo) / union;
+}
+
+export function mergeOverlapping(hyps, threshold = 0.50) {
+  // Process in confidence-descending order so the higher-confidence
+  // hypothesis becomes the primary when two overlap.
+  const sorted = [...hyps].sort((a, b) => b.confidence.value - a.confidence.value);
+  const out = [];
+
+  for (const h of sorted) {
+    const zh = unionZone(h);
+    let absorbed = false;
+
+    for (const m of out) {
+      if (m.bias !== h.bias) continue;
+      const zm = unionZone(m);
+      if (!zh || !zm) continue;
+      if (jaccard(zh, zm) < threshold) continue;
+
+      // Same scenario — union the type branches, keep primary's zones/confidence.
+      const combined = new Set([...(m.typeBranch ?? []), ...(h.typeBranch ?? [])]);
+      m.typeBranch = [...combined].sort();
+      // Widen completion zones to cover both
+      if (h.zones?.completion && m.zones?.completion) {
+        for (const [t, z] of Object.entries(h.zones.completion)) {
+          if (z && !m.zones.completion[t]) m.zones.completion[t] = z;
+        }
+      }
+      absorbed = true;
+      break;
+    }
+
+    if (!absorbed) out.push({ ...h, typeBranch: h.typeBranch ? [...h.typeBranch] : null });
+  }
+
+  return out;
+}
+
+export function beam(hyps, k = 4) {
+  return [...hyps]
+    .sort((a, b) => b.confidence.value - a.confidence.value)
+    .slice(0, k);
+}
+
+// Main entry point: merge overlapping scenarios, then keep top-k.
+export function rankAndBeam(hyps, k = 4) {
+  return beam(mergeOverlapping(hyps), k);
 }
 
 // ── P.1  Hypothesis enumeration ───────────────────────────────────────────────
