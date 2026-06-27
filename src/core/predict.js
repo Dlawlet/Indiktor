@@ -299,6 +299,15 @@ export function enumerateHypotheses(pivots, livePrice, opts = {}) {
     if (Math.abs(legA) < 1e-10) continue;
 
     const bias = legA > 0 ? 'bull' : 'bear';
+
+    // Coherence gate: the 1° pivot (before O) must lie beyond A in the leg-A
+    // direction — bull flat (legA>0) needs preO above A, bear flat needs preO
+    // below A. Otherwise the hard invalidation (= preO.price) would sit on the
+    // wrong side of A and the "flat" is structurally incoherent (a scenario that
+    // would render bullish geometry as a bearish setup, or vice versa). Mirrors
+    // flats.js trendContextOk's 1° clause so the predictor and detector agree.
+    if (preO && (preO.price - A.price) * legA <= 0) continue;
+
     const bi   = oi + 2;
 
     // ── formingB ──────────────────────────────────────────────────────────────

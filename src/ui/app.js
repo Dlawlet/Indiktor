@@ -24,11 +24,41 @@ let annotPoints = [];
 let cache = {};           // { [tf]: { candles, pivots, patterns, live, hyps } }
 let selectedIdx    = null;
 let selectedHypIdx = null;
-let pinnedHyp      = null;  // { ghostData:{candles,pivots}, color, hypIdx, tf } | null
 let lastMetrics    = null;  // last computeMetrics result — refreshed each run()
 
+// ── Pinned scenario (persists across refresh / asset / tf in localStorage) ─────
+const PIN_KEY = 'pred-pin-v1';
+
+// Stable signature of a hypothesis from its anchor pivots + stage, so a pinned
+// scenario can be re-identified after the hypotheses are re-enumerated on
+// refresh (the array index is NOT stable; the geometry is).
+function hypSig(h) {
+  const a = h?.anchor ?? {};
+  return [a.O?.time, a.A?.time, a.B?.time ?? '', a.C?.time ?? '', h?.stage, h?.bias].join('|');
+}
+
+function loadPin() {
+  try { return JSON.parse(localStorage.getItem(PIN_KEY)) || null; }
+  catch { return null; }
+}
+function savePin(p) {
+  if (p) localStorage.setItem(PIN_KEY, JSON.stringify(p));
+  else   localStorage.removeItem(PIN_KEY);
+}
+
+// { ghostData:{candles,pivots}, color, sig, asset, tf, bias, stage } | null
+let pinnedHyp = loadPin();
+
+function pinMatchesView() {
+  return pinnedHyp && pinnedHyp.asset === sym() && pinnedHyp.tf === activeTf;
+}
+
+// Always reset the pinned overlay first so a stale pin from another series can
+// never linger on the current chart; only redraw when it belongs to this view.
 function redrawPinnedGhost() {
-  if (!pinnedHyp || !waveChart) return;
+  if (!waveChart) return;
+  waveChart.clearPinnedGhostCandles();
+  if (!pinMatchesView()) return;
   waveChart.drawPinnedGhostCandles(pinnedHyp.ghostData.candles, pinnedHyp.ghostData.pivots, pinnedHyp.color);
 }
 
@@ -40,6 +70,20 @@ const STAGE_LABEL = {
   formingC:    'C EN COURS',
   'awaiting2°': 'ATTEND. 2°',
 };
+
+// A flat's stored `bias` is its leg-A direction (the internal convention shared
+// by predict.js / flats.js). The PREDICTED move — where the TP / 2° continuation
+// sits — is the OPPOSITE: a "bull flat" (leg A up, in a down-trend) continues
+// DOWN. We display this continuation direction so the card's arrow matches the
+// chart's ghost candles and TP, instead of contradicting them.
+function continuation(bias) {
+  const down = bias === 'bull';
+  return {
+    arrow: down ? '▼' : '▲',
+    label: down ? 'baissier' : 'haussier',
+    cls:   down ? 'bear' : 'bull', // reuse existing red/green .pbias classes
+  };
+}
 
 // ── Snapshot persistence ──────────────────────────────────────────────────────
 const SNAP_KEY      = 'pred-snaps-v1';
@@ -179,13 +223,13 @@ function renderPatternList(patterns, live, hyps = []) {
   if (live) {
     const types = live.possibleTypes.map(t => FLAT_LABELS[t]).join(' / ');
     const col   = FLAT_COLORS[live.possibleTypes[0]] ?? '#aaa';
-    const arrow = live.bias === 'bull' ? '▲' : '▼';
+    const cont  = continuation(live.bias);
     html += `
       <div class="pcard live" style="--accent:${col}">
         <div class="pcard-head">
           <span class="live-badge">EN COURS</span>
           <span class="pname">${types}</span>
-          <span class="pbias ${live.bias}">${arrow} ${live.bias}</span>
+          <span class="pbias ${cont.cls}" title="Sens de continuation prévu">${cont.arrow} ${cont.label}</span>
         </div>
         <div class="prow"><span class="pk">B/A</span><span class="pv">${live.bRet}</span></div>
         <div class="prow"><span class="pk">Depuis</span><span class="pv">${fmtDate(live.aStart.time)}</span></div>
@@ -197,12 +241,12 @@ function renderPatternList(patterns, live, hyps = []) {
     html += '<div class="section-label">PRÉDICTIONS</div>';
     hyps.forEach((h, i) => {
       const col      = PRED_COLORS[i % PRED_COLORS.length];
-      const arrow    = h.bias === 'bull' ? '▲' : '▼';
+      const cont     = continuation(h.bias);
       const conf     = (h.confidence.value * 100).toFixed(0);
       const stLbl    = STAGE_LABEL[h.stage] ?? h.stage;
       const branch   = h.typeBranch?.join(' · ') ?? '—';
       const sel      = selectedHypIdx === i;
-      const isPinned = pinnedHyp?.hypIdx === i && pinnedHyp?.tf === activeTf;
+      const isPinned = pinMatchesView() && pinnedHyp.sig === hypSig(h);
 
       let targetLine = '';
       const soft = h.zones?.invalidation?.soft;
@@ -219,7 +263,7 @@ function renderPatternList(patterns, live, hyps = []) {
         <div class="pcard pred${sel ? ' selected' : ''}${isPinned ? ' pinned' : ''}" style="--accent:${col}" data-hyp="${i}">
           <div class="pcard-head">
             <span class="live-badge" style="background:${col}22;color:${col}">${stLbl}</span>
-            <span class="pbias ${h.bias}">${arrow} ${h.bias}</span>
+            <span class="pbias ${cont.cls}" title="Sens de continuation prévu (cible / 2°)">${cont.arrow} ${cont.label}</span>
             <button class="pin-btn${isPinned ? ' on' : ''}" data-pin="${i}" title="${isPinned ? 'Défixer' : 'Fixer l\'estimation'}">📌</button>
           </div>
           <div class="prow"><span class="pk">Type</span><span class="pv">${branch}</span></div>
@@ -229,6 +273,15 @@ function renderPatternList(patterns, live, hyps = []) {
         </div>`;
     });
     html += `<div class="pred-metrics">${buildMetricsStr(lastMetrics)}</div>`;
+  }
+
+  // Fallback unpin: a pin is active on this series but its hypothesis is no
+  // longer among the shown beam (it dropped out on a refresh) — give the user
+  // a guaranteed way to remove it.
+  if (pinMatchesView() && !hyps.some(h => hypSig(h) === pinnedHyp.sig)) {
+    const cont = continuation(pinnedHyp.bias);
+    html += `<div class="pin-orphan">📌 épingle active (${cont.label})
+      <button id="pin-clear">retirer</button></div>`;
   }
 
   // ── HISTORIQUE ────────────────────────────────────────────────────────────────
@@ -241,13 +294,13 @@ function renderPatternList(patterns, live, hyps = []) {
     [...patterns].reverse().forEach((p, revI) => {
       const origIdx = patterns.length - 1 - revI;
       const col   = FLAT_COLORS[p.type] ?? '#888';
-      const arrow = p.bias === 'bull' ? '▲' : '▼';
+      const cont  = continuation(p.bias);
       const sel   = selectedIdx === origIdx;
       html += `
         <div class="pcard${sel ? ' selected' : ''}" style="--accent:${col}" data-idx="${origIdx}">
           <div class="pcard-head">
             <span class="pname">${p.label}</span>
-            <span class="pbias ${p.bias}">${arrow} ${p.bias}</span>
+            <span class="pbias ${cont.cls}" title="Sens de continuation">${cont.arrow} ${cont.label}</span>
           </div>
           <div class="prob-bar"><i style="width:${((p.confidence ?? 0) * 100).toFixed(0)}%;background:${col}"></i></div>
           <div class="prow"><span class="pk">Conf</span><span class="pv">${((p.confidence ?? 0) * 100).toFixed(0)}%</span></div>
@@ -258,6 +311,15 @@ function renderPatternList(patterns, live, hyps = []) {
   }
 
   wrap.innerHTML = html;
+
+  // Fallback unpin handler
+  const pinClear = el('pin-clear');
+  if (pinClear) pinClear.addEventListener('click', () => {
+    pinnedHyp = null;
+    savePin(null);
+    waveChart.clearPinnedGhostCandles();
+    renderPatternList(patterns, live, hyps);
+  });
 
   // Click: predictive hypothesis card
   wrap.querySelectorAll('.pcard[data-hyp]').forEach(card => {
@@ -301,14 +363,17 @@ function renderPatternList(patterns, live, hyps = []) {
       const hyp   = data.hyps?.[i];
       if (!hyp) return;
       const color = PRED_COLORS[i % PRED_COLORS.length];
+      const sig   = hypSig(hyp);
 
-      if (pinnedHyp?.hypIdx === i && pinnedHyp?.tf === activeTf) {
+      if (pinMatchesView() && pinnedHyp.sig === sig) {
         pinnedHyp = null;
+        savePin(null);
         waveChart.clearPinnedGhostCandles();
       } else {
         const lp        = data.candles[data.candles.length - 1].close;
         const ghostData = generateGhostCandles(hyp, lp, data.candles);
-        pinnedHyp = { ghostData, color, hypIdx: i, tf: activeTf };
+        pinnedHyp = { ghostData, color, sig, asset: sym(), tf: activeTf, bias: hyp.bias, stage: hyp.stage };
+        savePin(pinnedHyp);
         waveChart.drawPinnedGhostCandles(ghostData.candles, ghostData.pivots, color);
         if (ghostData.candles.length) waveChart.extendRightEdge(ghostData.candles[ghostData.candles.length - 1].time);
       }
@@ -359,7 +424,10 @@ function classifyFromPoints(pts) {
   const bRet = bLen / aLen;
   const aDir = Math.sign(pts[1].price - pts[0].price);
   const bBreaksAStart = aDir < 0 ? pts[2].price > pts[0].price : pts[2].price < pts[0].price;
-  const bias = aDir < 0 ? 'bull' : 'bear';
+  // leg-A convention (matches flats.js / predict.js): legA>0 → bull, legA<0 → bear.
+  // (Was inverted here, so the annotation tool labelled patterns opposite to the
+  // detector.) Cards display the continuation direction via continuation().
+  const bias = aDir > 0 ? 'bull' : 'bear';
 
   let type;
   if (bBreaksAStart)    type = bRet >= 1.5 ? 'expanding' : 'running';
@@ -405,8 +473,9 @@ function handleAnnotClick(time, price) {
     el('annot-step').textContent = 'Cliquer la fin de B (= début de C)';
   } else if (annotPoints.length === 3) {
     const { type, bias, bRet } = classifyFromPoints(annotPoints);
+    const cont = continuation(bias);
     el('annot-step').textContent = 'Détecté :';
-    el('annot-type-info').textContent = `${bias === 'bull' ? '▲' : '▼'} ${bias} · B/A = ${bRet}`;
+    el('annot-type-info').textContent = `${cont.arrow} ${cont.label} · B/A = ${bRet}`;
     el('annot-type').value = type;
     el('annot-type').style.display = '';
     el('annot-confirm').style.display = '';
@@ -456,7 +525,7 @@ function findSimilarPatterns(example, pivots, threshold = 0.45) {
     const aLen = Math.abs(aEnd.price - aStart.price);
     if (aLen === 0) continue;
     const bRet  = Math.abs(bEnd.price - aEnd.price) / aLen;
-    const bias  = (aEnd.price < aStart.price) ? 'bull' : 'bear'; // aDir sign
+    const bias  = (aEnd.price > aStart.price) ? 'bull' : 'bear'; // leg-A convention (matches flats.js)
     if (bias !== exBias) continue;
 
     const ratioDiff  = Math.abs(bRet - exBret) / Math.max(0.1, exBret);

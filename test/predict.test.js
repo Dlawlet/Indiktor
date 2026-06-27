@@ -219,6 +219,23 @@ test('enumerateHypotheses: bear flat detected (legA<0)', () => {
   assert.ok(fc.legA < 0,   'legA should be negative for bear flat');
 });
 
+test('enumerateHypotheses: rejects incoherent 1° (preO on wrong side of A)', () => {
+  // Bull flat (O=100,A=150) requires the 1° pivot above A. Here preO=120 < A=150,
+  // so the O=100/A=150 hypothesis is structurally incoherent and must be dropped.
+  const pivots = [pv(120, 'H'), pv(100, 'L'), pv(150, 'H'), pv(106, 'L')];
+  const hyps   = enumerateHypotheses(pivots, 155);
+  const bad = hyps.find(h => h.anchor.O?.price === 100 && h.anchor.preO?.price === 120);
+  assert.equal(bad, undefined, 'hypothesis with 1° on the wrong side must be rejected');
+});
+
+test('enumerateHypotheses: keeps coherent 1° (preO beyond A)', () => {
+  // Same geometry but preO=200 > A=150 → coherent, must be kept.
+  const pivots = [pv(200, 'H'), pv(100, 'L'), pv(150, 'H'), pv(106, 'L')];
+  const hyps   = enumerateHypotheses(pivots, 155);
+  const good = hyps.find(h => h.anchor.O?.price === 100 && h.anchor.A?.price === 150);
+  assert.ok(good, 'coherent hypothesis should be present');
+});
+
 // ── predictiveConfidence ──────────────────────────────────────────────────────
 
 test('predictiveConfidence: formingC > formingB (more confirmed pivots = higher confidence)', () => {
