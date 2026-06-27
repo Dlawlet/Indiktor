@@ -1,0 +1,112 @@
+// Phase 6e — duration priors for Elliott Wave flat legs (spec §P.8).
+//
+// Each leg's bar count is benchmarked against leg-A duration:
+//   legB expected:  [0.382, 1.618] × legA  (Fibonacci sandwich)
+//   legC expected:  [0.500, 2.000] × legA  (wider — C is often extended)
+//
+// Outside the expected window the score decays linearly toward a floor of 0.30
+// (soft, not a hard kill). Score = 1.0 everywhere inside the window.
+//
+// Usage:
+//   let hyps = enumerateHypotheses(pivots, livePrice);
+//   hyps = withTiming(hyps, currentBarIndex);
+
+const B_RATIO = { lo: 0.382, hi: 1.618 };
+const C_RATIO = { lo: 0.500, hi: 2.000 };
+const FLOOR   = 0.30;   // minimum timing factor (never kills a hypothesis)
+const NEUTRAL = 1.00;   // stub value before any timing info is available
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// Linear soft factor: 1.0 inside [lo, hi], decays to FLOOR outside.
+function softFactor(ratio, lo, hi) {
+  if (ratio >= lo && ratio <= hi) return 1.0;
+  if (ratio < lo) {
+    // Too short: decay from 1.0 at lo to FLOOR at 0
+    return lo > 0 ? Math.max(FLOOR, ratio / lo) : FLOOR;
+  }
+  // Too long: decay from 1.0 at hi to FLOOR over a second window of width hi
+  return Math.max(FLOOR, 1.0 - (ratio - hi) / hi);
+}
+
+// Geometric mean of two factors (equal weighting without domination)
+const gm = (a, b) => Math.sqrt(a * b);
+
+// ── timingScore ───────────────────────────────────────────────────────────────
+//
+// Returns a soft confidence factor ∈ [FLOOR, 1.0] based on how well the
+// observed leg durations (in candle bars) match the prior.
+//
+// currentBar: the candle index of "now" (only used for forming-stage hyps;
+//             ignored for awaiting2° where C is already confirmed).
+//
+// Returns NEUTRAL (1.0) when index data is unavailable — callers should not
+// penalise hypotheses that lack bar-index information.
+
+export function timingScore(hyp, currentBar = null) {
+  const { O, A, B, C } = hyp.anchor;
+
+  if (!O || !A || O.index == null || A.index == null) return NEUTRAL;
+
+  const legA = Math.abs(A.index - O.index);
+  if (legA === 0) return NEUTRAL;
+
+  const stage = hyp.stage;
+
+  // ── formingB: B is still forming; measure elapsed time since A ────────────
+  if (stage === 'formingB') {
+    if (currentBar == null || A.index == null) return NEUTRAL;
+    const elapsed = currentBar - A.index;
+    if (elapsed < 0) return NEUTRAL;
+    return softFactor(elapsed / legA, B_RATIO.lo, B_RATIO.hi);
+  }
+
+  // ── formingC: B confirmed; measure B duration + elapsed-since-B ──────────
+  if (stage === 'formingC') {
+    if (!B || B.index == null) return NEUTRAL;
+    const legB = Math.abs(B.index - A.index);
+    const bScore = softFactor(legB / legA, B_RATIO.lo, B_RATIO.hi);
+
+    if (currentBar == null) return bScore;
+    const elapsedC = currentBar - B.index;
+    if (elapsedC < 0) return bScore;
+    const cScore = softFactor(elapsedC / legA, C_RATIO.lo, C_RATIO.hi);
+    return gm(bScore, cScore);
+  }
+
+  // ── awaiting2°: all four confirmed; score both B and C durations ──────────
+  if (stage === 'awaiting2°') {
+    if (!B || !C || B.index == null || C.index == null) return NEUTRAL;
+    const legB   = Math.abs(B.index - A.index);
+    const legCDur = Math.abs(C.index - B.index);
+    const bScore = softFactor(legB   / legA, B_RATIO.lo, B_RATIO.hi);
+    const cScore = softFactor(legCDur / legA, C_RATIO.lo, C_RATIO.hi);
+    return gm(bScore, cScore);
+  }
+
+  return NEUTRAL;  // formingA or unrecognised stage
+}
+
+// ── withTiming ────────────────────────────────────────────────────────────────
+//
+// Enriches each hypothesis with a `timing` component and adjusts
+// confidence.value proportionally, replacing any previously applied timing.
+//
+// Safe to call multiple times (e.g. as bars elapse): each call replaces the
+// previous timing factor without compounding.
+
+export function withTiming(hyps, currentBar = null) {
+  return hyps.map(h => {
+    const ts   = timingScore(h, currentBar);
+    const prev = h.confidence.components?.timing ?? NEUTRAL;
+    const newV = Math.min(1.0, h.confidence.value * (ts / (prev || 1e-10)));
+    return {
+      ...h,
+      confidence: {
+        ...h.confidence,
+        value:      newV,
+        components: { ...h.confidence.components, timing: ts },
+      },
+    };
+  });
+}
