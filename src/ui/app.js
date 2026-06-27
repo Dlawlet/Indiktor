@@ -29,7 +29,7 @@ let lastMetrics    = null;  // last computeMetrics result — refreshed each run
 
 function redrawPinnedGhost() {
   if (!pinnedHyp || !waveChart) return;
-  waveChart.drawGhostCandles(pinnedHyp.ghostData.candles, pinnedHyp.ghostData.pivots, pinnedHyp.color + '88');
+  waveChart.drawPinnedGhostCandles(pinnedHyp.ghostData.candles, pinnedHyp.ghostData.pivots, pinnedHyp.color);
 }
 
 // Prediction scenario colors (match chart.js DARK.scenario)
@@ -266,6 +266,7 @@ function renderPatternList(patterns, live, hyps = []) {
       if (selectedHypIdx === i) {
         selectedHypIdx = null;
         waveChart.clearPredictions();
+        waveChart.clearGhostCandles();
         redrawPinnedGhost();
       } else {
         selectedHypIdx = i;
@@ -297,12 +298,12 @@ function renderPatternList(patterns, live, hyps = []) {
 
       if (pinnedHyp?.hypIdx === i && pinnedHyp?.tf === activeTf) {
         pinnedHyp = null;
-        waveChart.clearGhostCandles();
+        waveChart.clearPinnedGhostCandles();
       } else {
         const lp        = data.candles[data.candles.length - 1].close;
         const ghostData = generateGhostCandles(hyp, lp, data.candles);
         pinnedHyp = { ghostData, color, hypIdx: i, tf: activeTf };
-        waveChart.drawGhostCandles(ghostData.candles, ghostData.pivots, color + '88');
+        waveChart.drawPinnedGhostCandles(ghostData.candles, ghostData.pivots, color);
         if (ghostData.candles.length) waveChart.extendRightEdge(ghostData.candles[ghostData.candles.length - 1].time);
       }
       renderPatternList(data.patterns, data.live, data.hyps);
@@ -325,6 +326,7 @@ function renderPatternList(patterns, live, hyps = []) {
         selectedIdx    = idx;
         selectedHypIdx = null;
         waveChart.clearPredictions();
+        waveChart.clearGhostCandles();  // clear active pred ghost when selecting historical
         waveChart.highlightFlat(data.patterns, idx);
         redrawPinnedGhost();
       }

@@ -60,9 +60,11 @@ export function createWaveChart(container, dark = true) {
   let flatPriceLines = [];
   let liveSeries = [];      // in-progress flat overlay
   let livePriceLines = [];
-  let ghostSeries     = null;
-  let ghostProjSeries = [];   // schematic lines owned by drawGhostCandles
-  let predSeries      = [];   // predictive hypothesis overlays
+  let ghostSeries          = null;
+  let ghostProjSeries      = [];   // schematic lines owned by drawGhostCandles
+  let pinnedGhostSeries    = null; // separate series for pinned scenario (persists across clicks)
+  let pinnedGhostProjLines = [];
+  let predSeries           = [];   // predictive hypothesis overlays
   let predPriceLines = [];
   let _predMarkers  = [];
   let _allPivots = [];
@@ -714,6 +716,52 @@ export function createWaveChart(container, dark = true) {
       if (ghostSeries) { chart.removeSeries(ghostSeries); ghostSeries = null; }
       ghostProjSeries.forEach(s => chart.removeSeries(s));
       ghostProjSeries = [];
+    },
+
+    // Pinned ghost: drawn in a warm amber tone, survives calls to drawGhostCandles.
+    drawPinnedGhostCandles(ghostData, projectedPivots, color) {
+      if (pinnedGhostSeries) { chart.removeSeries(pinnedGhostSeries); pinnedGhostSeries = null; }
+      pinnedGhostProjLines.forEach(s => chart.removeSeries(s));
+      pinnedGhostProjLines = [];
+      if (!ghostData?.length) return;
+
+      pinnedGhostSeries = chart.addCandlestickSeries({
+        upColor:         'rgba(200,170,80,0.14)',
+        downColor:       'rgba(150,110,40,0.14)',
+        wickUpColor:     'rgba(220,185,90,0.30)',
+        wickDownColor:   'rgba(170,125,50,0.30)',
+        borderUpColor:   'rgba(220,185,90,0.40)',
+        borderDownColor: 'rgba(170,125,50,0.40)',
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      });
+      pinnedGhostSeries.setData(ghostData);
+
+      if (projectedPivots?.length) {
+        pinnedGhostSeries.setMarkers(projectedPivots.map(pv => ({
+          time:     pv.time,
+          position: pv.dir === 'up' ? 'aboveBar' : 'belowBar',
+          color:    (color ?? '#f0c060') + 'cc',
+          shape:    'circle',
+          text:     '📌' + pv.label,
+          size:     1,
+        })));
+        const col      = (color?.slice(0, 7) ?? '#f0c060');
+        const schematic = chart.addLineSeries({
+          color: col + '88', lineWidth: 1, lineStyle: LC.LineStyle.Dashed,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        });
+        schematic.setData([
+          { time: ghostData[0].time, value: ghostData[0].open },
+          ...projectedPivots.map(pv => ({ time: pv.time, value: pv.price })),
+        ]);
+        pinnedGhostProjLines.push(schematic);
+      }
+    },
+
+    clearPinnedGhostCandles() {
+      if (pinnedGhostSeries) { chart.removeSeries(pinnedGhostSeries); pinnedGhostSeries = null; }
+      pinnedGhostProjLines.forEach(s => chart.removeSeries(s));
+      pinnedGhostProjLines = [];
     },
 
     extendRightEdge(maxTime) {

@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>INDIKTOR · Snapshots</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg:#05050e; --bg2:#0a0a1a; --bg3:#0f0f22; --amber:#f0a500; --cyan:#00d4ff;
+      --green:#00ff88; --red:#ff3058; --text:#b8b8cc; --dim:#55556a;
+      --border:rgba(240,165,0,0.15);
+    }
+    *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+    body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospace;min-height:100vh}
+
+    header{display:flex;justify-content:space-between;align-items:center;
+           padding:1rem 1.6rem;border-bottom:1px solid var(--border)}
+    .logo{font-family:'Orbitron',monospace;font-weight:900;letter-spacing:.2em;color:var(--amber);font-size:1.1rem}
+    .logo span{color:var(--cyan)}
+    .header-right{display:flex;align-items:center;gap:.8rem}
+    a.navlink{font-family:'Orbitron',monospace;font-size:.6rem;letter-spacing:.12em;color:var(--cyan);
+      text-decoration:none;border:1px solid var(--border);border-radius:3px;padding:.4rem .6rem}
+    a.navlink:hover{border-color:var(--cyan)}
+    button{background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:3px;
+           font-family:inherit;font-size:.7rem;padding:.4rem .7rem;cursor:pointer}
+    button:hover{border-color:var(--amber);color:var(--amber)}
+    button.danger{border-color:rgba(255,48,88,.3);color:var(--red)}
+    button.danger:hover{border-color:var(--red)}
+
+    main{max-width:1400px;margin:0 auto;padding:1.2rem 1.6rem;display:flex;flex-direction:column;gap:1.2rem}
+
+    /* ── Summary cards ─────────────────────────────────────────────────── */
+    .metric-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:.8rem}
+    .metric-card{background:var(--bg2);border:1px solid var(--border);border-radius:4px;
+                 padding:.9rem 1rem;text-align:center}
+    .metric-val{font-family:'Orbitron',monospace;font-size:1.5rem;font-weight:700;margin-bottom:.3rem}
+    .metric-lbl{font-size:.55rem;letter-spacing:.18em;color:var(--dim);text-transform:uppercase}
+    .metric-card.hit  .metric-val{color:var(--green)}
+    .metric-card.miss .metric-val{color:var(--red)}
+    .metric-card.pend .metric-val{color:var(--cyan)}
+    .metric-card.acc  .metric-val{color:var(--amber)}
+
+    /* ── Panels ────────────────────────────────────────────────────────── */
+    .panel{background:var(--bg2);border:1px solid var(--border);border-radius:4px;overflow:hidden}
+    .panel-title{font-family:'Orbitron',monospace;font-size:.58rem;letter-spacing:.2em;color:var(--amber);
+                 padding:.75rem 1rem;border-bottom:1px solid var(--border)}
+
+    /* ── Feedback / parameter table ────────────────────────────────────── */
+    .fb-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;padding:1rem}
+    @media(max-width:800px){.fb-grid{grid-template-columns:1fr}}
+    .fb-table{width:100%;border-collapse:collapse;font-size:.65rem}
+    .fb-table th{color:var(--dim);font-weight:400;letter-spacing:.08em;padding:.4rem .6rem;
+                  border-bottom:1px solid var(--border);text-align:left}
+    .fb-table td{padding:.4rem .6rem;border-bottom:1px solid rgba(255,255,255,.04)}
+    .fb-table tr:last-child td{border-bottom:none}
+    .rec-badge{font-family:'Orbitron',monospace;font-size:.45rem;letter-spacing:.1em;padding:.1rem .35rem;
+               background:rgba(0,255,136,.1);color:var(--green);border:1px solid rgba(0,255,136,.3);border-radius:2px}
+    .acc-bar-wrap{background:var(--border);border-radius:2px;height:3px;width:60px;display:inline-block;vertical-align:middle}
+    .acc-bar{height:100%;border-radius:2px;background:var(--amber)}
+
+    /* ── Snapshot table ────────────────────────────────────────────────── */
+    .snap-table-wrap{overflow-x:auto}
+    table.snap-table{width:100%;border-collapse:collapse;font-size:.65rem}
+    table.snap-table th{color:var(--dim);font-weight:400;letter-spacing:.08em;padding:.5rem .8rem;
+                         border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
+    table.snap-table td{padding:.5rem .8rem;border-bottom:1px solid rgba(255,255,255,.03);vertical-align:middle}
+    table.snap-table tr.snap-row:hover td{background:rgba(255,255,255,.02);cursor:pointer}
+    .badge{font-size:.5rem;letter-spacing:.1em;padding:.1rem .35rem;border-radius:2px;white-space:nowrap}
+    .badge.hit {background:rgba(0,255,136,.12);color:var(--green);border:1px solid rgba(0,255,136,.3)}
+    .badge.miss{background:rgba(255,48,88,.12); color:var(--red);  border:1px solid rgba(255,48,88,.3)}
+    .badge.pend{background:rgba(0,212,255,.08); color:var(--cyan); border:1px solid rgba(0,212,255,.2)}
+    .bull{color:var(--green)} .bear{color:var(--red)}
+    .dim{color:var(--dim)}
+
+    /* Expandable detail row */
+    .detail-row{display:none}
+    .detail-row.open{display:table-row}
+    .detail-cell{background:var(--bg3);padding:.8rem 1rem;border-bottom:1px solid var(--border)}
+    .hyp-cards{display:flex;flex-wrap:wrap;gap:.6rem}
+    .hyp-card{border:1px solid var(--border);border-radius:3px;padding:.5rem .7rem;font-size:.62rem;min-width:200px}
+    .hyp-card .bias-lbl{font-size:.58rem}
+    .zone-row{display:flex;gap:.5rem;margin-top:.2rem;font-size:.6rem}
+    .zk{color:var(--dim);min-width:50px}
+
+    .empty-msg{padding:2rem;text-align:center;color:var(--dim);font-size:.7rem}
+  </style>
+</head>
+<body>
+<header>
+  <div>
+    <span class="logo">INDIKTOR <span>· SNAPSHOTS</span></span>
+  </div>
+  <div class="header-right">
+    <a href="index.html" class="navlink">← CHART</a>
+    <button id="refresh-btn">↻ ACTUALISER</button>
+    <button id="clear-btn" class="danger">✕ EFFACER TOUT</button>
+  </div>
+</header>
+
+<main>
+  <div class="metric-grid" id="metrics"></div>
+  <div class="panel" id="feedback-panel">
+    <div class="panel-title">BOUCLE DE FEEDBACK · PARAMÈTRES OPTIMAUX</div>
+    <div class="fb-grid" id="feedback"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title">HISTORIQUE DES SNAPSHOTS</div>
+    <div class="snap-table-wrap">
+      <table class="snap-table">
+        <thead>
+          <tr>
+            <th>DATE / HEURE</th>
+            <th>ASSET</th>
+            <th>TF</th>
+            <th>k</th>
+            <th>CONF MIN</th>
+            <th>HYPS</th>
+            <th>PRIX</th>
+            <th>STATUT</th>
+          </tr>
+        </thead>
+        <tbody id="snap-tbody"></tbody>
+      </table>
+      <div id="empty-msg" class="empty-msg" style="display:none">
+        Aucun snapshot enregistré. Ouvrir le chart pour capturer le premier snapshot (2h après la première visite).
+      </div>
+    </div>
+  </div>
+</main>
+
+<script type="module">
+import { computeMetrics } from './src/core/snapshot.js';
+
+const SNAP_KEY = 'pred-snaps-v1';
+
+function loadSnaps() {
+  try { return JSON.parse(localStorage.getItem(SNAP_KEY) ?? '[]'); }
+  catch { return []; }
+}
+
+function fmt(ts) {
+  return new Date(ts).toLocaleString('fr-FR', {
+    day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit',
+  });
+}
+
+function fmtPrice(p) {
+  if (p == null) return '—';
+  return '$' + Math.round(p).toLocaleString('en-US');
+}
+
+function outcomeHtml(outcome) {
+  if (outcome === 'hit')     return '<span class="badge hit">✓ HIT</span>';
+  if (outcome === 'miss')    return '<span class="badge miss">✗ MISS</span>';
+  if (outcome === 'expired') return '<span class="badge miss">⌛ EXPIRÉ</span>';
+  return '<span class="badge pend">⏳ EN ATTENTE</span>';
+}
+
+// ── Summary metrics ──────────────────────────────────────────────────────────
+
+function renderMetrics(snaps) {
+  const m    = computeMetrics(snaps);
+  const acc  = m.accuracy != null ? (m.accuracy * 100).toFixed(0) + '%' : '—';
+  const total = m.total;
+  document.getElementById('metrics').innerHTML = `
+    <div class="metric-card">
+      <div class="metric-val">${total}</div>
+      <div class="metric-lbl">Total</div>
+    </div>
+    <div class="metric-card hit">
+      <div class="metric-val">${m.hit}</div>
+      <div class="metric-lbl">Hits</div>
+    </div>
+    <div class="metric-card miss">
+      <div class="metric-val">${m.miss}</div>
+      <div class="metric-lbl">Miss</div>
+    </div>
+    <div class="metric-card pend">
+      <div class="metric-val">${m.pending}</div>
+      <div class="metric-lbl">En attente</div>
+    </div>
+    <div class="metric-card acc">
+      <div class="metric-val">${acc}</div>
+      <div class="metric-lbl">Précision</div>
+    </div>`;
+}
+
+// ── Parameter feedback tables ─────────────────────────────────────────────────
+
+function groupBy(snaps, keyFn) {
+  const map = {};
+  for (const s of snaps) {
+    const k = keyFn(s);
+    if (k == null) continue;
+    (map[k] = map[k] ?? []).push(s);
+  }
+  return map;
+}
+
+function bestKey(groups) {
+  let bestAcc = -1, bestK = null;
+  for (const [k, list] of Object.entries(groups)) {
+    const m = computeMetrics(list);
+    const a = m.accuracy ?? -1;
+    if (a > bestAcc || (a === bestAcc && list.length > (groups[bestK]?.length ?? 0))) {
+      bestAcc = a; bestK = k;
+    }
+  }
+  return bestK;
+}
+
+function paramTable(groups, label, formatKey, recommended) {
+  const keys = Object.keys(groups).sort((a, b) => +a - +b);
+  if (!keys.length) return '<p class="dim" style="padding:.8rem;font-size:.65rem">Pas de données</p>';
+
+  const rows = keys.map(k => {
+    const m   = computeMetrics(groups[k]);
+    const acc = m.accuracy != null ? (m.accuracy * 100).toFixed(0) + '%' : '—';
+    const pct = m.accuracy != null ? m.accuracy * 100 : 0;
+    const isRec = k === recommended;
+    return `<tr>
+      <td>${formatKey(k)}${isRec ? ' <span class="rec-badge">★ REC</span>' : ''}</td>
+      <td>${m.total}</td>
+      <td>${m.hit}</td>
+      <td>${m.miss}</td>
+      <td>
+        <span class="acc-bar-wrap"><span class="acc-bar" style="width:${pct}%"></span></span>
+        <span style="margin-left:.4rem">${acc}</span>
+      </td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <div>
+      <div style="font-size:.6rem;color:var(--dim);letter-spacing:.1em;margin-bottom:.5rem">${label}</div>
+      <table class="fb-table">
+        <thead><tr><th>Valeur</th><th>Snaps</th><th>✓</th><th>✗</th><th>Précision</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function renderFeedback(snaps) {
+  const byK    = groupBy(snaps, s => s.params?.sensitivity);
+  const byConf = groupBy(snaps, s => s.params?.minConf);
+  const recK   = bestKey(byK);
+  const recC   = bestKey(byConf);
+
+  const html = paramTable(byK,    'ATR SENSIBILITÉ (k)',   k => `k = ${k}`,          recK)
+             + paramTable(byConf, 'CONFIANCE MIN (minConf)', k => `${(+k * 100).toFixed(0)}%`, recC);
+
+  document.getElementById('feedback').innerHTML = html;
+
+  // Show recommendation in title if we have enough data
+  const snapsWithOutcome = snaps.filter(s => s.outcome != null && s.outcome !== 'pending');
+  if (snapsWithOutcome.length >= 3 && recK && recC) {
+    document.querySelector('#feedback-panel .panel-title').textContent =
+      `BOUCLE DE FEEDBACK · k optimal: ${recK}  ·  minConf optimal: ${(+recC * 100).toFixed(0)}%`;
+  }
+}
+
+// ── Snapshot table ────────────────────────────────────────────────────────────
+
+function buildHypHtml(h, i) {
+  if (!h) return '';
+  const col   = ['#00d4ff','#b388ff','#ffcc44','#ff7744'][i % 4];
+  const stage = { formingB:'B EN COURS', formingC:'C EN COURS', 'awaiting2°':'ATTEND. 2°' }[h.stage] ?? h.stage;
+  const conf  = h.confidence?.value != null ? (h.confidence.value * 100).toFixed(0) + '%' : '—';
+  const branch = h.typeBranch?.join(' · ') ?? '—';
+  const soft  = h.zones?.invalidation?.soft;
+  const tp    = h.zones?.tp;
+  const hard  = h.zones?.invalidation?.hard_1deg;
+
+  const zoneRow = (k, v) => v ? `<div class="zone-row"><span class="zk">${k}</span><span>${v}</span></div>` : '';
+
+  return `
+    <div class="hyp-card" style="border-left:3px solid ${col}">
+      <div class="bias-lbl ${h.bias}">${h.bias === 'bull' ? '▲' : '▼'} ${h.bias} · ${stage} · ${conf}</div>
+      <div style="color:var(--dim);margin:.2rem 0;font-size:.58rem">${branch}</div>
+      ${zoneRow('Zone C', soft  ? fmtPrice(soft[0]) + ' – ' + fmtPrice(soft[1]) : null)}
+      ${zoneRow('TP',     tp    ? fmtPrice(h.bias==='bull' ? tp[0] : tp[1]) : null)}
+      ${zoneRow('Inval.', hard != null ? fmtPrice(hard) : null)}
+    </div>`;
+}
+
+function renderSnapList(snaps) {
+  const tbody = document.getElementById('snap-tbody');
+  const empty = document.getElementById('empty-msg');
+
+  if (!snaps.length) {
+    tbody.innerHTML = '';
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+
+  // Render newest first
+  const sorted = [...snaps].reverse();
+  tbody.innerHTML = sorted.map((snap, idx) => {
+    const realIdx = snaps.length - 1 - idx;
+    const asset   = snap.params?.asset ?? snap.id?.split('_')[0] ?? '—';
+    const tf      = snap.params?.tf    ?? snap.id?.split('_')[1] ?? '—';
+    const k       = snap.params?.sensitivity ?? '—';
+    const conf    = snap.params?.minConf != null ? (snap.params.minConf * 100).toFixed(0) + '%' : '—';
+    const nHyps   = snap.hypotheses?.length ?? 0;
+
+    return `
+      <tr class="snap-row" data-idx="${realIdx}">
+        <td>${fmt(snap.timestamp)}</td>
+        <td>${asset}</td>
+        <td>${tf}</td>
+        <td>${k}</td>
+        <td>${conf}</td>
+        <td class="dim">${nHyps}</td>
+        <td>${fmtPrice(snap.livePrice)}</td>
+        <td>${outcomeHtml(snap.outcome)}</td>
+      </tr>
+      <tr class="detail-row" data-detail="${realIdx}">
+        <td class="detail-cell" colspan="8">
+          <div class="hyp-cards">
+            ${(snap.hypotheses ?? []).map((h, i) => buildHypHtml(h, i)).join('')}
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+
+  // Toggle detail rows on click
+  tbody.querySelectorAll('.snap-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const idx    = row.dataset.idx;
+      const detail = tbody.querySelector(`.detail-row[data-detail="${idx}"]`);
+      if (detail) detail.classList.toggle('open');
+    });
+  });
+}
+
+// ── Render & events ───────────────────────────────────────────────────────────
+
+function render() {
+  const snaps = loadSnaps();
+  renderMetrics(snaps);
+  renderFeedback(snaps);
+  renderSnapList(snaps);
+}
+
+document.getElementById('refresh-btn').addEventListener('click', render);
+
+document.getElementById('clear-btn').addEventListener('click', () => {
+  if (confirm('Effacer tous les snapshots ? Cette action est irréversible.')) {
+    localStorage.removeItem(SNAP_KEY);
+    render();
+  }
+});
+
+render();
+</script>
+</body>
+</html>
