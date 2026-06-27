@@ -119,12 +119,15 @@ function maybeCaptureSnap(hyps, livePrice) {
   if (!hyps?.length) return;
   const snaps = loadSnaps();
   const now   = Date.now();
-  const last  = snaps[snaps.length - 1];
-  if (last && now - last.timestamp < SNAP_INTERVAL) return;
+  const asset = sym(), tf = activeTf;
+  // Throttle PER series (asset+tf), not globally: a single global "last" would
+  // suppress capture for every other asset/tf viewed within the interval.
+  const lastForSeries = snaps.filter(s => s.params?.asset === asset && s.params?.tf === tf).pop();
+  if (lastForSeries && now - lastForSeries.timestamp < SNAP_INTERVAL) return;
   snaps.push(takeSnapshot(hyps, livePrice, {
     timestamp: now,
-    id:        `${sym()}_${activeTf}_${now}`,
-    params:    { sensitivity: +el('sensitivity').value, minConf: +el('min-conf').value, asset: sym(), tf: activeTf },
+    id:        `${asset}_${tf}_${now}`,
+    params:    { sensitivity: +el('sensitivity').value, minConf: +el('min-conf').value, asset, tf },
   }));
   saveSnaps(snaps);
 }
@@ -134,7 +137,8 @@ function buildMetricsStr(metrics) {
   const accStr = metrics.accuracy != null
     ? ` · ${(metrics.accuracy * 100).toFixed(0)}% acc`
     : '';
-  return `${metrics.total} snap · ✓ ${metrics.hit} · ✗ ${metrics.miss} · ⏳ ${metrics.pending}${accStr}`;
+  const expStr = metrics.expired ? ` · ⌛ ${metrics.expired}` : '';
+  return `${metrics.total} snap · ✓ ${metrics.hit} · ✗ ${metrics.miss} · ⏳ ${metrics.pending}${expStr}${accStr}`;
 }
 
 // ── Thème ────────────────────────────────────────────────────────────────────
