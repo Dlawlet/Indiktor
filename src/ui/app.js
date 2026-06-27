@@ -2,6 +2,8 @@ import { fetchKlines } from '../core/data.js';
 import { zigzag } from '../core/zigzag.js';
 import { createWaveChart } from './chart.js';
 import { detectFlatPatterns, detectLiveFlat, FLAT_COLORS, FLAT_LABELS } from '../core/flats.js';
+import { enumerateHypotheses, rankAndBeam } from '../core/predict.js';
+import { withTiming } from '../core/timing.js';
 
 const TIMEFRAMES = ['1m', '15m', '1h', '4h', '1d'];
 const TF_LIMIT   = 500;
@@ -17,8 +19,18 @@ let activeTf = '1d';
 let isDark   = (localStorage.getItem(THEME_KEY) ?? 'dark') === 'dark';
 let annotMode  = false;
 let annotPoints = [];
-let cache = {};           // { [tf]: { candles, pivots, patterns, live } }
-let selectedIdx = null;
+let cache = {};           // { [tf]: { candles, pivots, patterns, live, hyps } }
+let selectedIdx    = null;
+let selectedHypIdx = null;
+
+// Prediction scenario colors (match chart.js DARK.scenario)
+const PRED_COLORS = ['#00d4ff', '#b388ff', '#ffcc44', '#ff7744'];
+
+const STAGE_LABEL = {
+  formingB:    'B EN COURS',
+  formingC:    'C EN COURS',
+  'awaiting2°': 'ATTEND. 2°',
+};
 
 // ── Thème ────────────────────────────────────────────────────────────────────
 
@@ -51,19 +63,28 @@ async function run() {
   const patterns  = detectFlatPatterns(confirmed, { minConfidence: minConf, maxLegSpan: 3, candles });
   const live      = detectLiveFlat(pivots, { minConfidence: minConf * 0.7 });
 
-  cache[activeTf] = { candles, pivots, patterns, live };
+  // Predictive engine: enumerate hypotheses from confirmed pivots
+  const livePrice  = candles[candles.length - 1].close;
+  const currentBar = candles.length - 1;
+  let hyps = enumerateHypotheses(confirmed, livePrice);
+  hyps = withTiming(hyps, currentBar);
+  hyps = rankAndBeam(hyps, 4);
+
+  cache[activeTf] = { candles, pivots, patterns, live, hyps };
 
   if (!waveChart) waveChart = createWaveChart(el('chart'), isDark);
   waveChart.setCandles(candles);
   waveChart.setZigzag(pivots);
   waveChart.clearFlatPatterns();
+  waveChart.clearPredictions();
   waveChart.drawFlatPatterns(patterns);
   if (live) waveChart.drawLiveFlat(live);
   waveChart.fit();
 
-  selectedIdx = null;
+  selectedIdx    = null;
+  selectedHypIdx = null;
   renderTabs();
-  renderPatternList(patterns, live);
+  renderPatternList(patterns, live, hyps);
   setStatus(`${patterns.length} patterns · ${sym()} ${activeTf} · ${new Date().toLocaleTimeString()}`);
 }
 
@@ -85,10 +106,11 @@ function renderTabs() {
 
 // ── Liste des patterns (panneau droit) ───────────────────────────────────────
 
-function renderPatternList(patterns, live) {
+function renderPatternList(patterns, live, hyps = []) {
   const wrap = el('pattern-list');
   let html = '';
 
+  // ── EN COURS (live flat detection) ──────────────────────────────────────────
   if (live) {
     const types = live.possibleTypes.map(t => FLAT_LABELS[t]).join(' / ');
     const col   = FLAT_COLORS[live.possibleTypes[0]] ?? '#aaa';
@@ -105,10 +127,50 @@ function renderPatternList(patterns, live) {
       </div>`;
   }
 
+  // ── PRÉDICTIONS (predictive engine output) ───────────────────────────────────
+  if (hyps?.length) {
+    html += '<div class="section-label">PRÉDICTIONS</div>';
+    hyps.forEach((h, i) => {
+      const col    = PRED_COLORS[i % PRED_COLORS.length];
+      const arrow  = h.bias === 'bull' ? '▲' : '▼';
+      const conf   = (h.confidence.value * 100).toFixed(0);
+      const stLbl  = STAGE_LABEL[h.stage] ?? h.stage;
+      const branch = h.typeBranch?.join(' · ') ?? '—';
+      const sel    = selectedHypIdx === i;
+
+      // Show the next price target (completion zone hi/lo, or TP)
+      let targetLine = '';
+      const soft = h.zones?.invalidation?.soft;
+      const tp   = h.zones?.tp;
+      if (h.stage === 'awaiting2°' && tp) {
+        const tgt = h.bias === 'bull' ? tp[0] : tp[1];
+        targetLine = `<div class="prow"><span class="pk">TP</span><span class="pv">$${Math.round(tgt).toLocaleString()}</span></div>`;
+      } else if (soft) {
+        const [lo, hi] = soft;
+        targetLine = `<div class="prow"><span class="pk">Zone</span><span class="pv">$${Math.round(lo).toLocaleString()} – $${Math.round(hi).toLocaleString()}</span></div>`;
+      }
+
+      html += `
+        <div class="pcard pred${sel ? ' selected' : ''}" style="--accent:${col}" data-hyp="${i}">
+          <div class="pcard-head">
+            <span class="live-badge" style="background:${col}22;color:${col}">${stLbl}</span>
+            <span class="pbias ${h.bias}">${arrow} ${h.bias}</span>
+          </div>
+          <div class="prow"><span class="pk">Type</span><span class="pv">${branch}</span></div>
+          <div class="prob-bar"><i style="width:${conf}%;background:${col}"></i></div>
+          <div class="prow"><span class="pk">Conf</span><span class="pv">${conf}%</span></div>
+          ${targetLine}
+        </div>`;
+    });
+  }
+
+  // ── HISTORIQUE ────────────────────────────────────────────────────────────────
+  if (patterns.length || hyps?.length) {
+    html += '<div class="section-label">HISTORIQUE</div>';
+  }
   if (!patterns.length) {
-    html += '<p class="muted" style="padding:1rem .8rem">Aucun pattern détecté — essayer une sensibilité plus basse.</p>';
+    html += '<p class="muted" style="padding:1rem .8rem">Aucun pattern — essayer une sensibilité plus basse.</p>';
   } else {
-    // Most recent first
     [...patterns].reverse().forEach((p, revI) => {
       const origIdx = patterns.length - 1 - revI;
       const col   = FLAT_COLORS[p.type] ?? '#888';
@@ -130,6 +192,32 @@ function renderPatternList(patterns, live) {
 
   wrap.innerHTML = html;
 
+  // Click: predictive hypothesis card
+  wrap.querySelectorAll('.pcard[data-hyp]').forEach(card => {
+    card.addEventListener('click', () => {
+      const data = cache[activeTf];
+      if (!data) return;
+      const i   = +card.dataset.hyp;
+      const hyp = data.hyps?.[i];
+      if (!hyp) return;
+
+      if (selectedHypIdx === i) {
+        // Deselect
+        selectedHypIdx = null;
+        waveChart.clearPredictions();
+      } else {
+        selectedHypIdx = i;
+        selectedIdx = null;          // deselect any historical pattern
+        waveChart.clearFlatPatterns();
+        waveChart.drawFlatPatterns(data.patterns);
+        if (data.live) waveChart.drawLiveFlat(data.live);
+        waveChart.drawPrediction(hyp, PRED_COLORS[i % PRED_COLORS.length]);
+      }
+      renderPatternList(data.patterns, data.live, data.hyps);
+    });
+  });
+
+  // Click: historical pattern card
   wrap.querySelectorAll('.pcard[data-idx]').forEach(card => {
     card.addEventListener('click', () => {
       const data = cache[activeTf];
@@ -141,10 +229,12 @@ function renderPatternList(patterns, live) {
         waveChart.drawFlatPatterns(data.patterns);
         if (data.live) waveChart.drawLiveFlat(data.live);
       } else {
-        selectedIdx = idx;
+        selectedIdx    = idx;
+        selectedHypIdx = null;       // deselect any prediction
+        waveChart.clearPredictions();
         waveChart.highlightFlat(data.patterns, idx);
       }
-      renderPatternList(data.patterns, data.live);
+      renderPatternList(data.patterns, data.live, data.hyps);
     });
   });
 }

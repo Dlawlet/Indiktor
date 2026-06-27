@@ -61,6 +61,9 @@ export function createWaveChart(container, dark = true) {
   let liveSeries = [];      // in-progress flat overlay
   let livePriceLines = [];
   let ghostSeries = null;
+  let predSeries    = [];     // predictive hypothesis overlays
+  let predPriceLines = [];
+  let _predMarkers  = [];
   let _allPivots = [];
   let _labelMap = new Map();
   let _extraMarkers = [];   // annotation / similarity markers
@@ -70,8 +73,35 @@ export function createWaveChart(container, dark = true) {
   function refreshMarkers() {
     candles.setMarkers(mergeMarkers(
       buildPivotMarkers(T, _allPivots, _labelMap),
-      [..._flatMarkers, ..._extraMarkers],
+      [..._flatMarkers, ..._predMarkers, ..._extraMarkers],
     ));
+  }
+
+  function clearPredictionsImpl() {
+    predSeries.forEach(s => chart.removeSeries(s));
+    predPriceLines.forEach(pl => candles.removePriceLine(pl));
+    predSeries = [];
+    predPriceLines = [];
+    _predMarkers = [];
+  }
+
+  // Draws a horizontal price band [lo, hi] from t1 to t2 using an area + floor line.
+  function drawPredBand(t1, t2, lo, hi, col, alpha) {
+    const roof  = Math.max(lo, hi);
+    const floor = Math.min(lo, hi);
+    const fill  = chart.addAreaSeries({
+      topColor:    col + alpha, bottomColor: col + '08',
+      lineColor:   col + alpha, lineWidth: 1,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    });
+    fill.setData([{ time: t1, value: roof }, { time: t2, value: roof }]);
+    predSeries.push(fill);
+    const bot = chart.addLineSeries({
+      color: col + alpha, lineWidth: 1, lineStyle: LC.LineStyle.Dotted,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    });
+    bot.setData([{ time: t1, value: floor }, { time: t2, value: floor }]);
+    predSeries.push(bot);
   }
 
   function clearOverlaysImpl() {
@@ -676,5 +706,96 @@ export function createWaveChart(container, dark = true) {
     },
 
     fit() { chart.timeScale().fitContent(); },
+
+    // ── Predictive hypothesis overlays ───────────────────────────────────────
+
+    clearPredictions() {
+      clearPredictionsImpl();
+      refreshMarkers();
+    },
+
+    // Draw one predictive hypothesis on the chart:
+    //   - dashed polyline through confirmed anchors (O→A→B→C)
+    //   - translucent completion zone (where the next pivot should land)
+    //   - hard 1° invalidation line (red dashed)
+    //   - TP zone (measured move, lighter fill)
+    //   - O/A/B/C pivot labels above/below bars
+    drawPrediction(hyp, color = null) {
+      clearPredictionsImpl();
+      const col  = (color ?? T.scenario[0]).slice(0, 7);
+      const { O, A, B, C } = hyp.anchor ?? {};
+      if (!O || !A) { refreshMarkers(); return; }
+
+      const legADur = Math.abs(A.time - O.time);
+      const last    = C ?? B ?? A;
+      const fromT   = last.time;
+      const toT     = fromT + legADur * 1.8;
+
+      // Known-pivot polyline
+      const pts = [O, A, B, C].filter(Boolean);
+      const poly = chart.addLineSeries({
+        color: col + 'bb', lineWidth: 1, lineStyle: LC.LineStyle.Dashed,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      });
+      poly.setData(pts.map(p => ({ time: p.time, value: p.price })));
+      predSeries.push(poly);
+
+      // Completion zone (formingB / formingC: soft band where next pivot lands)
+      const soft = hyp.zones?.invalidation?.soft;
+      if (soft) {
+        drawPredBand(fromT, toT, soft[0], soft[1], col, '38');
+      }
+
+      // Hard 1° invalidation
+      const hard1 = hyp.zones?.invalidation?.hard_1deg;
+      if (hard1 != null) {
+        predPriceLines.push(candles.createPriceLine({
+          price: hard1, color: T.invalid + 'cc', lineWidth: 1,
+          lineStyle: LC.LineStyle.Dashed, axisLabelVisible: true, title: '✕ 1°',
+        }));
+      }
+
+      // Reversal level (awaiting2°: if price crosses back through C, flat is at risk)
+      const reversal = hyp.zones?.invalidation?.reversal;
+      if (reversal != null) {
+        predPriceLines.push(candles.createPriceLine({
+          price: reversal, color: T.invalid + '66', lineWidth: 1,
+          lineStyle: LC.LineStyle.Dotted, axisLabelVisible: true, title: 'retour C',
+        }));
+      }
+
+      // TP zone
+      const tp = hyp.zones?.tp;
+      if (tp) {
+        const [tpLo, tpHi] = tp;
+        const tpTarget = hyp.bias === 'bull' ? tpLo : tpHi;
+        drawPredBand(fromT, toT + legADur * 0.5, tpLo, tpHi, col, '20');
+        predPriceLines.push(candles.createPriceLine({
+          price: tpTarget, color: col + 'aa', lineWidth: 2,
+          lineStyle: LC.LineStyle.Dotted, axisLabelVisible: true,
+          title: `TP $${Math.round(tpTarget).toLocaleString()}`,
+        }));
+      }
+
+      // O/A/B/C pivot labels
+      const bull = hyp.bias === 'bull';
+      [O, A, B, C].filter(Boolean).forEach((pt, i) => {
+        const above = (i % 2 === 0) !== bull;
+        _predMarkers.push({
+          time:     pt.time,
+          position: above ? 'aboveBar' : 'belowBar',
+          color:    col + 'dd',
+          shape:    'circle',
+          text:     ['O', 'A', 'B', 'C'][i],
+          size:     1,
+        });
+      });
+
+      refreshMarkers();
+      chart.timeScale().setVisibleRange({
+        from: O.time - legADur * 0.3,
+        to:   toT,
+      });
+    },
   };
 }
