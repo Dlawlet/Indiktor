@@ -186,50 +186,75 @@ test('detectFlatPatterns: accepts when all candles are within the flat range', (
 });
 
 // ── trendContextOk unit tests ─────────────────────────────────────────────────
+// Bull flat layout:  1°(preO) → O(L) → A(H) → B(L) → C(H) → 2°(postC)
+//   Main trend BEARISH: 1° must be above A (not just above O); 2° must be below B (not just below C)
+// Bear flat layout:  1°(preO) → O(H) → A(L) → B(H) → C(L) → 2°(postC)
+//   Main trend BULLISH: 1° must be below A; 2° must be above B
 
 const tp = (price) => ({ price });
 
 test('trendContextOk: passes when no context pivots exist (edge of data)', () => {
-  // Only O and C present — both context checks are skipped
   const pivots = [tp(100), tp(150), tp(118), tp(160)];
-  assert.ok(trendContextOk(pivots, 0, 3, 50), 'should pass with no surrounding context');
+  // startIdx=0 → no preO; ci+1=4=length → no postC; both sides skipped
+  assert.ok(trendContextOk(pivots, 0, 3, 50, pivots[1], pivots[2]), 'should pass at edge of data');
 });
 
-test('trendContextOk: bull flat — pre-O above O (correct bearish approach)', () => {
-  // preO=200 > O=100, legA=50 → (200-100)*50=5000 > 0 ✓
+test('trendContextOk: bull flat — 1° above A (correct: prior high exceeds correction peak)', () => {
+  // preO=200 > A=150 → (200-150)*50=2500 > 0 ✓
   const pivots = [tp(200), tp(100), tp(150), tp(118), tp(160)];
-  assert.ok(trendContextOk(pivots, 1, 4, 50), 'should pass with correct pre-O');
+  assert.ok(trendContextOk(pivots, 1, 4, 50, pivots[2], pivots[3]), '1° above A should pass');
 });
 
-test('trendContextOk: bull flat — pre-O below O (wrong trend, price rose into O)', () => {
-  // preO=80 < O=100, legA=50 → (80-100)*50=-1000 < 0 → FAIL
+test('trendContextOk: bull flat — 1° between O and A (above O but below A → reject)', () => {
+  // preO=130, A=150: (130-150)*50=-1000 < 0 → FAIL
+  // Old check (preO>O) would pass, new check (preO>A) correctly rejects
+  const pivots = [tp(130), tp(100), tp(150), tp(118), tp(160)];
+  assert.ok(!trendContextOk(pivots, 1, 4, 50, pivots[2], pivots[3]), '1° between O and A should reject — not a valid invalidation level');
+});
+
+test('trendContextOk: bull flat — 1° below O (price rose into flat, wrong direction → reject)', () => {
+  // preO=80 < O=100 < A=150 → (80-150)*50=-3500 < 0 → FAIL
   const pivots = [tp(80), tp(100), tp(150), tp(118), tp(160)];
-  assert.ok(!trendContextOk(pivots, 1, 4, 50), 'should reject: pre-O below O means price rose into flat start');
+  assert.ok(!trendContextOk(pivots, 1, 4, 50, pivots[2], pivots[3]), '1° below O should reject');
 });
 
-test('trendContextOk: bull flat — post-C below C (correct bearish continuation)', () => {
-  // C=160, postC=120 < 160, legA=50 → (160-120)*50=2000 > 0 ✓
+test('trendContextOk: bull flat — 2° below B (correct: bearish continuation clears TP level)', () => {
+  // postC=110 < B=118 → (118-110)*50=400 > 0 ✓; preO=200 > A=150 ✓
+  const pivots = [tp(200), tp(100), tp(150), tp(118), tp(160), tp(110)];
+  assert.ok(trendContextOk(pivots, 1, 4, 50, pivots[2], pivots[3]), '2° below B should pass');
+});
+
+test('trendContextOk: bull flat — 2° between B and C (below C but above B → reject)', () => {
+  // postC=120, B=118: (118-120)*50=-100 < 0 → FAIL
+  // Old check (postC<C=160) would pass, new check (postC<B=118) correctly rejects
   const pivots = [tp(200), tp(100), tp(150), tp(118), tp(160), tp(120)];
-  assert.ok(trendContextOk(pivots, 1, 4, 50), 'should pass with post-C below C');
+  assert.ok(!trendContextOk(pivots, 1, 4, 50, pivots[2], pivots[3]), '2° above B should reject — trend not strong enough to set a TP target');
 });
 
-test('trendContextOk: bull flat — post-C above C (price rose after flat, wrong direction)', () => {
-  // C=160, postC=180 > 160, legA=50 → (160-180)*50=-1000 < 0 → FAIL
+test('trendContextOk: bull flat — 2° above C (price rose after flat → reject)', () => {
+  // postC=180, B=118: (118-180)*50=-3100 < 0 → FAIL
   const pivots = [tp(200), tp(100), tp(150), tp(118), tp(160), tp(180)];
-  assert.ok(!trendContextOk(pivots, 1, 4, 50), 'should reject: post-C above C means price rose after correction');
+  assert.ok(!trendContextOk(pivots, 1, 4, 50, pivots[2], pivots[3]), '2° above C should reject');
 });
 
-test('trendContextOk: bear flat — preO below O and postC above C (correct bullish context)', () => {
-  // Bear flat: legA=-110 (A below O). preO=50 < O=200 → (50-200)*(-110)=16500 > 0 ✓
-  // postC=180 > C=100 → (100-180)*(-110)=8800 > 0 ✓
+test('trendContextOk: bear flat — 1° below A and 2° above B (correct bullish context)', () => {
+  // Bear flat: O=200(H), A=90(L), B=160(H), C=100(L), legA=-110
+  // preO=50 < A=90 → (50-90)*(-110)=4400 > 0 ✓
+  // postC=180 > B=160 → (160-180)*(-110)=2200 > 0 ✓
   const pivots = [tp(50), tp(200), tp(90), tp(160), tp(100), tp(180)];
-  assert.ok(trendContextOk(pivots, 1, 4, -110), 'should pass: bear flat in bullish trend');
+  assert.ok(trendContextOk(pivots, 1, 4, -110, pivots[2], pivots[3]), 'bear flat with valid bullish context should pass');
 });
 
-test('trendContextOk: bear flat — postC below C (wrong: price fell after, means trend reversed)', () => {
-  // postC=80 < C=100 → (100-80)*(-110)=-2200 < 0 → FAIL
+test('trendContextOk: bear flat — 2° between C and B (above C but below B → reject)', () => {
+  // postC=130, B=160: (160-130)*(-110)=-3300 < 0 → FAIL
+  const pivots = [tp(50), tp(200), tp(90), tp(160), tp(100), tp(130)];
+  assert.ok(!trendContextOk(pivots, 1, 4, -110, pivots[2], pivots[3]), '2° below B in bear flat should reject');
+});
+
+test('trendContextOk: bear flat — 2° below C (price fell after flat → reject)', () => {
+  // postC=80, B=160: (160-80)*(-110)=-8800 < 0 → FAIL
   const pivots = [tp(50), tp(200), tp(90), tp(160), tp(100), tp(80)];
-  assert.ok(!trendContextOk(pivots, 1, 4, -110), 'should reject: post-C below C in bear flat means trend did not resume bullish');
+  assert.ok(!trendContextOk(pivots, 1, 4, -110, pivots[2], pivots[3]), 'bear flat with bearish post-C should reject');
 });
 
 test('detectFlatPatterns: pattern has required output fields', () => {

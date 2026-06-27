@@ -308,25 +308,26 @@ export function candlesContained(O, A, B, C, candles) {
 }
 
 // 2. Trend context: a flat is corrective (counter-trend).
-//    legA > 0 (bull flat) means the correction went UP → main trend is bearish.
-//      • pivot BEFORE O must be above O (price was falling into O)
-//      • pivot AFTER C must be below C (price continues falling after C)
-//    legA < 0 (bear flat): mirror image.
+//    legA > 0 (bull flat, bearish main trend):
+//      • 1° (pivot before O) must be ABOVE A — confirming the prior impulse exceeded
+//        the correction's peak, giving a valid invalidation level above A
+//      • 2° (pivot after C) must be BELOW B — confirming bearish continuation clears
+//        below the flat's internal low, giving a valid TP target below B
+//    legA < 0 (bear flat, bullish main trend): mirror image.
 //    When a context pivot is absent (edge of data) that side is skipped.
-export function trendContextOk(pivots, startIdx, ci, legA) {
-  const O = pivots[startIdx];
-  const C = pivots[ci];
-
+export function trendContextOk(pivots, startIdx, ci, legA, A, B) {
   if (startIdx > 0) {
     const preO = pivots[startIdx - 1];
-    // preO must be on the "upstream" side: (preO − O) has same sign as legA
-    if ((preO.price - O.price) * legA <= 0) return false;
+    // 1° must be beyond A in the main-trend direction:
+    //   bull flat (legA>0): preO > A  |  bear flat (legA<0): preO < A
+    if ((preO.price - A.price) * legA <= 0) return false;
   }
 
   if (ci + 1 < pivots.length) {
     const postC = pivots[ci + 1];
-    // postC must continue the main trend: (C − postC) has same sign as legA
-    if ((C.price - postC.price) * legA <= 0) return false;
+    // 2° must clear beyond B in the continuation direction:
+    //   bull flat (legA>0): postC < B  |  bear flat (legA<0): postC > B
+    if ((B.price - postC.price) * legA <= 0) return false;
   }
 
   return true;
@@ -395,7 +396,7 @@ function bestFlatFrom(pivots, startIdx, minConf, maxSpan, altGap, bp, candles) {
 
         // Hard filter 2 — the flat must be corrective: trend before O and after C
         //                  must run opposite to legA (main trend continuity)
-        if (!trendContextOk(pivots, startIdx, ci, legA)) continue;
+        if (!trendContextOk(pivots, startIdx, ci, legA, A, B)) continue;
 
         const cands = classifyWindow(O, A, B, C, bp, candles);
         if (!cands.length) continue;
