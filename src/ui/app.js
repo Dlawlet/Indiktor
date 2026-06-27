@@ -4,7 +4,7 @@ import { createWaveChart } from './chart.js';
 import { detectFlatPatterns, detectLiveFlat, FLAT_COLORS, FLAT_LABELS } from '../core/flats.js';
 import { enumerateHypotheses, rankAndBeam } from '../core/predict.js';
 import { withTiming } from '../core/timing.js';
-import { takeSnapshot, evaluateSnapshot, computeMetrics } from '../core/snapshot.js';
+import { takeSnapshot, evaluateSnapshotPath, computeMetrics } from '../core/snapshot.js';
 import { generateGhostCandles } from '../core/ghost.js';
 
 const TIMEFRAMES = ['1m', '15m', '1h', '4h', '1d'];
@@ -55,17 +55,23 @@ function saveSnaps(list) {
   localStorage.setItem(SNAP_KEY, JSON.stringify(list.slice(-MAX_SNAPS)));
 }
 
-function autoEvaluate(currentPrice) {
+// Path-aware evaluation: walk the candles that printed since each snapshot.
+// Only snapshots captured on the currently-loaded series (same asset+tf) can be
+// resolved here — others are left untouched until their series is viewed, or
+// resolved in bulk from the snapshots page (which fetches per series).
+function autoEvaluate(candles, asset, tf) {
   const snaps = loadSnaps();
   if (!snaps.length) return null;
-  const updated = snaps.map(s =>
-    (s.outcome != null && s.outcome !== 'pending') ? s : evaluateSnapshot(s, currentPrice)
-  );
+  const updated = snaps.map(s => {
+    const closed  = s.outcome != null && s.outcome !== 'pending';
+    const matches = s.params?.asset === asset && s.params?.tf === tf;
+    return (closed || !matches) ? s : evaluateSnapshotPath(s, candles);
+  });
   saveSnaps(updated);
   return computeMetrics(updated);
 }
 
-function maybyCaptureSnap(hyps, livePrice) {
+function maybeCaptureSnap(hyps, livePrice) {
   if (!hyps?.length) return;
   const snaps = loadSnaps();
   const now   = Date.now();
@@ -125,8 +131,8 @@ async function run() {
   hyps = withTiming(hyps, currentBar);
   hyps = rankAndBeam(hyps, 4);
 
-  lastMetrics = autoEvaluate(livePrice);
-  maybyCaptureSnap(hyps, livePrice);
+  lastMetrics = autoEvaluate(candles, sym(), activeTf);
+  maybeCaptureSnap(hyps, livePrice);
 
   cache[activeTf] = { candles, pivots, patterns, live, hyps };
 

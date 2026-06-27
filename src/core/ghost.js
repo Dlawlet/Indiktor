@@ -105,8 +105,12 @@ export function generateGhostCandles(hyp, livePrice, candles) {
   }
 
   if (hyp.stage === 'formingB') {
-    // soft zone = where B should land
-    const bTarget = soft ? (soft[0] + soft[1]) / 2 : null;
+    // Where B should land = the per-type completion band (rB ≈ 0.8–1.0 for a
+    // regular flat), NOT the outer `soft` invalidation band [0.18·legA, 3.5·legA]
+    // whose midpoint (~1.84·legA) would draw B almost twice the length of leg A.
+    const compl   = hyp.zones?.completion;
+    const bBand   = compl?.regular ?? (compl ? Object.values(compl).find(Boolean) : null);
+    const bTarget = bBand ? (bBand[0] + bBand[1]) / 2 : null;
     if (bTarget == null) return { candles: [], pivots: [] };
 
     // 1. Current → B (corrective, 3-wave)

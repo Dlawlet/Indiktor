@@ -55,10 +55,24 @@
                   border-bottom:1px solid var(--border);text-align:left}
     .fb-table td{padding:.4rem .6rem;border-bottom:1px solid rgba(255,255,255,.04)}
     .fb-table tr:last-child td{border-bottom:none}
-    .rec-badge{font-family:'Orbitron',monospace;font-size:.45rem;letter-spacing:.1em;padding:.1rem .35rem;
-               background:rgba(0,255,136,.1);color:var(--green);border:1px solid rgba(0,255,136,.3);border-radius:2px}
     .acc-bar-wrap{background:var(--border);border-radius:2px;height:3px;width:60px;display:inline-block;vertical-align:middle}
     .acc-bar{height:100%;border-radius:2px;background:var(--amber)}
+    .fb-note{font-size:.58rem;color:var(--dim);padding:.6rem 1rem 0;line-height:1.5}
+    .fb-note code{color:var(--cyan);background:rgba(0,212,255,.07);padding:.05rem .3rem;border-radius:2px}
+
+    /* ── Calibration ───────────────────────────────────────────────────────── */
+    .calib-body{padding:1rem;display:grid;grid-template-columns:1fr 1.2fr;gap:1.2rem}
+    @media(max-width:800px){.calib-body{grid-template-columns:1fr}}
+    .calib-status{font-size:.65rem;line-height:1.7}
+    .calib-status b{color:var(--amber)}
+    .calib-status .ok{color:var(--green)} .calib-status .wait{color:var(--cyan)}
+    .rel-row{margin-bottom:.3rem;font-size:.6rem}
+    .rel-row .lbl{color:var(--dim)}
+    .relbar{background:var(--border);border-radius:2px;height:4px;margin-top:.15rem;overflow:hidden}
+    .relbar i{display:block;height:100%;background:var(--cyan)}
+    .relbar i.thin{opacity:.3}
+    .badge.exp{background:rgba(255,160,40,.1);color:var(--amber);border:1px solid rgba(255,160,40,.3)}
+    .hyp-outcome{float:right}
 
     /* ── Snapshot table ────────────────────────────────────────────────── */
     .snap-table-wrap{overflow-x:auto}
@@ -94,15 +108,23 @@
   </div>
   <div class="header-right">
     <a href="index.html" class="navlink">← CHART</a>
-    <button id="refresh-btn">↻ ACTUALISER</button>
+    <button id="resolve-btn" title="Récupère les bougies récentes et résout chaque snapshot (hit / miss / expiré)">↻ RÉSOUDRE</button>
+    <button id="refresh-btn">⟳ ACTUALISER</button>
     <button id="clear-btn" class="danger">✕ EFFACER TOUT</button>
   </div>
 </header>
 
 <main>
   <div class="metric-grid" id="metrics"></div>
+
+  <div class="panel" id="calib-panel">
+    <div class="panel-title">CALIBRATION · CONFIANCE BRUTE → TAUX DE RÉUSSITE RÉEL</div>
+    <div class="calib-body" id="calibration"></div>
+  </div>
+
   <div class="panel" id="feedback-panel">
-    <div class="panel-title">BOUCLE DE FEEDBACK · PARAMÈTRES OPTIMAUX</div>
+    <div class="panel-title">RÉPARTITION PAR PARAMÈTRE (DESCRIPTIF)</div>
+    <div class="fb-note" id="feedback-note"></div>
     <div class="fb-grid" id="feedback"></div>
   </div>
   <div class="panel">
@@ -131,13 +153,19 @@
 </main>
 
 <script type="module">
-import { computeMetrics } from './src/core/snapshot.js';
+import { computeMetrics, evaluateSnapshotPath } from './src/core/snapshot.js';
+import { exportDataset, calibrate, applyCalibration, MIN_SAMPLES } from './src/core/calibrate.js';
+import { fetchKlines } from './src/core/data.js';
 
 const SNAP_KEY = 'pred-snaps-v1';
 
 function loadSnaps() {
   try { return JSON.parse(localStorage.getItem(SNAP_KEY) ?? '[]'); }
   catch { return []; }
+}
+
+function saveSnaps(list) {
+  localStorage.setItem(SNAP_KEY, JSON.stringify(list));
 }
 
 function fmt(ts) {
@@ -199,19 +227,7 @@ function groupBy(snaps, keyFn) {
   return map;
 }
 
-function bestKey(groups) {
-  let bestAcc = -1, bestK = null;
-  for (const [k, list] of Object.entries(groups)) {
-    const m = computeMetrics(list);
-    const a = m.accuracy ?? -1;
-    if (a > bestAcc || (a === bestAcc && list.length > (groups[bestK]?.length ?? 0))) {
-      bestAcc = a; bestK = k;
-    }
-  }
-  return bestK;
-}
-
-function paramTable(groups, label, formatKey, recommended) {
+function paramTable(groups, label, formatKey) {
   const keys = Object.keys(groups).sort((a, b) => +a - +b);
   if (!keys.length) return '<p class="dim" style="padding:.8rem;font-size:.65rem">Pas de données</p>';
 
@@ -219,9 +235,8 @@ function paramTable(groups, label, formatKey, recommended) {
     const m   = computeMetrics(groups[k]);
     const acc = m.accuracy != null ? (m.accuracy * 100).toFixed(0) + '%' : '—';
     const pct = m.accuracy != null ? m.accuracy * 100 : 0;
-    const isRec = k === recommended;
     return `<tr>
-      <td>${formatKey(k)}${isRec ? ' <span class="rec-badge">★ REC</span>' : ''}</td>
+      <td>${formatKey(k)}</td>
       <td>${m.total}</td>
       <td>${m.hit}</td>
       <td>${m.miss}</td>
@@ -245,23 +260,67 @@ function paramTable(groups, label, formatKey, recommended) {
 function renderFeedback(snaps) {
   const byK    = groupBy(snaps, s => s.params?.sensitivity);
   const byConf = groupBy(snaps, s => s.params?.minConf);
-  const recK   = bestKey(byK);
-  const recC   = bestKey(byConf);
 
-  const html = paramTable(byK,    'ATR SENSIBILITÉ (k)',   k => `k = ${k}`,          recK)
-             + paramTable(byConf, 'CONFIANCE MIN (minConf)', k => `${(+k * 100).toFixed(0)}%`, recC);
+  document.getElementById('feedback').innerHTML =
+      paramTable(byK,    'ATR SENSIBILITÉ (k)',     k => `k = ${k}`)
+    + paramTable(byConf, 'CONFIANCE MIN (minConf)',  k => `${(+k * 100).toFixed(0)}%`);
 
-  document.getElementById('feedback').innerHTML = html;
+  // Honest framing: passive snapshots are all captured with whatever parameters
+  // were active at the time, so this is a DESCRIPTIVE breakdown — not a search
+  // for the optimum (you can't compare a parameter you never varied on the same
+  // data). The real optimiser is the backtest sweep.
+  document.getElementById('feedback-note').innerHTML =
+    `Répartition descriptive des snapshots déjà capturés. Pour <b>trouver</b> les ` +
+    `paramètres optimaux (même historique, grille de valeurs), lancer le balayage : ` +
+    `<code>node tools/backtest.js --sweep</code> et <code>--atr-sweep</code>.`;
+}
 
-  // Show recommendation in title if we have enough data
-  const snapsWithOutcome = snaps.filter(s => s.outcome != null && s.outcome !== 'pending');
-  if (snapsWithOutcome.length >= 3 && recK && recC) {
-    document.querySelector('#feedback-panel .panel-title').textContent =
-      `BOUCLE DE FEEDBACK · k optimal: ${recK}  ·  minConf optimal: ${(+recC * 100).toFixed(0)}%`;
-  }
+// ── Calibration: raw confidence → empirical hit rate ──────────────────────────
+
+function renderCalibration(snaps) {
+  const dataset = exportDataset(snaps);
+  const model   = calibrate(dataset);
+
+  const statusHtml = model.fitted
+    ? `<span class="ok">✓ ajustée</span> sur <b>${model.n}</b> hypothèses résolues.<br>
+       Exemple : une confiance brute de <b>60%</b> correspond empiriquement à
+       <b>${(applyCalibration(model, 0.60) * 100).toFixed(0)}%</b> de réussite.`
+    : `<span class="wait">⏳ brute</span> — ${dataset.length}/${MIN_SAMPLES} hypothèses résolues.<br>
+       Sous ${MIN_SAMPLES} exemples, aucune correction n'est appliquée (la confiance
+       brute est renvoyée telle quelle).`;
+
+  const bins = model.reliability.map(b => {
+    const rate = b.hitRate == null ? '—' : `${(b.hitRate * 100).toFixed(0)}%`;
+    const w    = b.hitRate == null ? 0 : b.hitRate * 100;
+    const thin = b.n === 0 ? ' thin' : '';
+    return `<div class="rel-row">
+      <span class="lbl">${(b.lo * 100).toFixed(0)}–${(b.hi * 100).toFixed(0)}%</span>
+      <span style="float:right">${rate} <span class="dim">(n=${b.n})</span></span>
+      <div class="relbar"><i class="${thin}" style="width:${w}%"></i></div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('calibration').innerHTML = `
+    <div class="calib-status">
+      <div style="font-size:.55rem;letter-spacing:.15em;color:var(--dim);margin-bottom:.5rem">ÉTAT</div>
+      ${statusHtml}
+    </div>
+    <div>
+      <div style="font-size:.55rem;letter-spacing:.15em;color:var(--dim);margin-bottom:.5rem">
+        FIABILITÉ PAR TRANCHE DE CONFIANCE (réussite réelle)
+      </div>
+      ${bins}
+    </div>`;
 }
 
 // ── Snapshot table ────────────────────────────────────────────────────────────
+
+function hypOutcomeBadge(outcome) {
+  if (outcome === 'hit')     return '<span class="badge hit hyp-outcome">✓ HIT</span>';
+  if (outcome === 'miss')    return '<span class="badge miss hyp-outcome">✗ MISS</span>';
+  if (outcome === 'expired') return '<span class="badge exp hyp-outcome">⌛ EXPIRÉ</span>';
+  return '<span class="badge pend hyp-outcome">⏳</span>';
+}
 
 function buildHypHtml(h, i) {
   if (!h) return '';
@@ -277,7 +336,8 @@ function buildHypHtml(h, i) {
 
   return `
     <div class="hyp-card" style="border-left:3px solid ${col}">
-      <div class="bias-lbl ${h.bias}">${h.bias === 'bull' ? '▲' : '▼'} ${h.bias} · ${stage} · ${conf}</div>
+      <div class="bias-lbl ${h.bias}">${h.bias === 'bull' ? '▲' : '▼'} ${h.bias} · ${stage} · ${conf}
+        ${hypOutcomeBadge(h.outcome)}</div>
       <div style="color:var(--dim);margin:.2rem 0;font-size:.58rem">${branch}</div>
       ${zoneRow('Zone C', soft  ? fmtPrice(soft[0]) + ' – ' + fmtPrice(soft[1]) : null)}
       ${zoneRow('TP',     tp    ? fmtPrice(h.bias==='bull' ? tp[0] : tp[1]) : null)}
@@ -341,11 +401,57 @@ function renderSnapList(snaps) {
 function render() {
   const snaps = loadSnaps();
   renderMetrics(snaps);
+  renderCalibration(snaps);
   renderFeedback(snaps);
   renderSnapList(snaps);
 }
 
+// ── Resolve all: fetch recent candles per (asset,tf) and path-evaluate ────────
+
+async function resolveAll() {
+  const snaps = loadSnaps();
+  if (!snaps.length) { setStatus('Aucun snapshot à résoudre.'); return; }
+
+  // Group pending snapshots by asset+tf so we fetch each series once.
+  const groups = new Map();
+  for (const s of snaps) {
+    if (s.outcome != null && s.outcome !== 'pending') continue;
+    const asset = s.params?.asset, tf = s.params?.tf;
+    if (!asset || !tf) continue;
+    const key = `${asset}|${tf}`;
+    if (!groups.has(key)) groups.set(key, { asset, tf });
+  }
+  if (!groups.size) { setStatus('Rien à résoudre (tout est déjà clôturé).'); return; }
+
+  setStatus('Récupération des bougies récentes…');
+  const candlesByKey = new Map();
+  for (const [key, { asset, tf }] of groups) {
+    try { candlesByKey.set(key, await fetchKlines(asset, tf, 1000)); }
+    catch (e) { setStatus(`Échec ${asset} ${tf}: ${e.message}`, true); }
+  }
+
+  let resolved = 0;
+  const updated = snaps.map(s => {
+    const closed = s.outcome != null && s.outcome !== 'pending';
+    if (closed) return s;
+    const candles = candlesByKey.get(`${s.params?.asset}|${s.params?.tf}`);
+    if (!candles) return s;
+    const next = evaluateSnapshotPath(s, candles);
+    if (next.outcome != null && next.outcome !== 'pending') resolved++;
+    return next;
+  });
+  saveSnaps(updated);
+  setStatus(`${resolved} snapshot(s) résolu(s) sur ${groups.size} série(s).`);
+  render();
+}
+
+function setStatus(msg) {
+  // Lightweight inline status via the document title (no status bar on this page).
+  document.title = `INDIKTOR · Snapshots — ${msg}`;
+}
+
 document.getElementById('refresh-btn').addEventListener('click', render);
+document.getElementById('resolve-btn').addEventListener('click', resolveAll);
 
 document.getElementById('clear-btn').addEventListener('click', () => {
   if (confirm('Effacer tous les snapshots ? Cette action est irréversible.')) {
