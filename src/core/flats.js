@@ -49,7 +49,7 @@ export function classifyFromRatios(rB, pC) {
 }
 
 // ── §A.6  Prototypicality bands + membership ──────────────────────────────────
-const BANDS = {
+export const BANDS = {
   //             rB [lo, ideal, hi]          pC [lo, ideal, hi]           lenC [lo, ideal, hi]
   regular:     { rB: [0.80, 0.95, 1.00],  pC: [ 0.00,  0.12,  0.30],  lenC: [0.85, 1.05, 1.30] },
   running:     { rB: [1.00, 1.15, 1.40],  pC: [-0.60, -0.25,  0.00],  lenC: [0.40, 0.70, 1.00] },
@@ -61,7 +61,7 @@ const F_FLOOR   = 0.15; // floor of membership function at band edge
 const SOFT_TAIL = 0.25; // exponential decay constant outside band (ratio units)
 const BAND_FLOOR = 0.20; // minimum band_fit to avoid non_flat gate (§A.9)
 
-function membership(x, lo, ideal, hi) {
+export function membership(x, lo, ideal, hi) {
   if (x === ideal) return 1.0;
   if (x >= lo && x <= hi) {
     return x < ideal
