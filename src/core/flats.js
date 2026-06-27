@@ -88,7 +88,7 @@ export function bandFit(ratios, type) {
 
 // ── §A.9  non_flat gate ───────────────────────────────────────────────────────
 // Returns true when the window can't fit any flat figure well enough.
-function isNonFlat(ratios) {
+export function isNonFlat(ratios) {
   const best = Math.max(...Object.keys(BANDS).map((t) => bandFit(ratios, t)));
   return best < BAND_FLOOR;
 }

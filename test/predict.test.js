@@ -236,6 +236,34 @@ test('enumerateHypotheses: keeps coherent 1° (preO beyond A)', () => {
   assert.ok(good, 'coherent hypothesis should be present');
 });
 
+test('enumerateHypotheses: rejects non-flat awaiting2° (band gate, matches detector)', () => {
+  // O=300,A=400 (legA=100), B=200 → rB=2.0 (beyond every type's rB band) → the
+  // window fits no flat figure → detector's non_flat gate; predictor must agree.
+  const pivots = [pv(500,'H'), pv(300,'L'), pv(400,'H'), pv(200,'L'), pv(250,'H')];
+  const hyps = enumerateHypotheses(pivots, 260);
+  const bad = hyps.find(h => h.stage === 'awaiting2°'
+    && h.anchor.O?.price === 300 && h.anchor.A?.price === 400);
+  assert.equal(bad, undefined, 'non-flat O-A-B-C must be rejected at awaiting2°');
+});
+
+test('enumerateHypotheses: rejects degenerate C (lenC < 0.10, matches detector)', () => {
+  // O=100,A=200 (legA=100), B=110 (rB=0.9 OK), C=115 → lenC=0.05 < 0.10 → reject.
+  const pivots = [pv(300,'H'), pv(100,'L'), pv(200,'H'), pv(110,'L'), pv(115,'H')];
+  const hyps = enumerateHypotheses(pivots, 116);
+  const bad = hyps.find(h => h.stage === 'awaiting2°'
+    && h.anchor.O?.price === 100 && h.anchor.A?.price === 200);
+  assert.equal(bad, undefined, 'degenerate-C hypothesis must be rejected at awaiting2°');
+});
+
+test('enumerateHypotheses: still accepts a valid flat awaiting2° (gates not over-eager)', () => {
+  // Clean regular bull flat: rB=0.88, pC=0.16, lenC≈1.04 — well inside the bands.
+  const pivots = [pv(200,'H'), pv(100,'L'), pv(150,'H'), pv(106,'L'), pv(158,'H')];
+  const hyps = enumerateHypotheses(pivots, 130);
+  const good = hyps.find(h => h.stage === 'awaiting2°'
+    && h.anchor.O?.price === 100 && h.anchor.A?.price === 150);
+  assert.ok(good, 'a valid flat must survive the lenC + non_flat gates');
+});
+
 // ── predictiveConfidence ──────────────────────────────────────────────────────
 
 test('predictiveConfidence: formingC > formingB (more confirmed pivots = higher confidence)', () => {

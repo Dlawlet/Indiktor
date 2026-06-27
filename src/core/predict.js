@@ -9,7 +9,7 @@
 //   2. Price zones (completion / invalidation / TP)  ← the hard deliverable
 //   3. Timing (soft, statistical, never a gate)
 
-import { BANDS, membership, computeRatios, bandFit } from './flats.js';
+import { BANDS, membership, computeRatios, bandFit, isNonFlat } from './flats.js';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -351,6 +351,16 @@ export function enumerateHypotheses(pivots, livePrice, opts = {}) {
 
     const C = pivots[ci];
     if (Math.sign(C.price - B.price) !== Math.sign(legA)) continue;
+
+    // O-A-B-C is now complete, so apply the SAME final constraints the historical
+    // detector enforces once a window has all four pivots (flats.js): a minimum
+    // C-leg length and the non-flat band gate. Without these the predictor could
+    // assert a "flat" the detector would reject (degenerate C, or a window that
+    // fits no flat figure well enough).
+    const lenC = Math.abs(C.price - B.price) / Math.abs(legA);
+    if (lenC < 0.10) continue;
+    const ratiosC = computeRatios(O, A, B, C);
+    if (!ratiosC || isNonFlat(ratiosC)) continue;
 
     // ── awaiting2° ────────────────────────────────────────────────────────────
     const hyp = {
