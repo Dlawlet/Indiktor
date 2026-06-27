@@ -103,13 +103,10 @@
         <option value="ETHUSDT">ETH</option>
         <option value="SOLUSDT">SOL</option>
       </select>
-      <label class="tag">SENSIBILITÉ
-        <select id="sensitivity" title="Seuil de renversement zigzag (× ATR-14)">
-          <option value="2">Fine (2× ATR)</option>
-          <option value="3" selected>Moyenne (3× ATR)</option>
-          <option value="4">Macro (4× ATR)</option>
-          <option value="5">Structurelle (5× ATR)</option>
-        </select>
+      <label class="tag">K (ATR×)
+        <input type="number" id="sensitivity" min="0.5" max="15" step="0.5" value="3"
+          title="Seuil de renversement zigzag (k × ATR-14)"
+          style="width:58px;text-align:center;padding:.35rem .4rem">
       </label>
       <label class="tag">CONFIANCE MIN
         <select id="min-conf" title="Seuil de confiance minimum pour accepter un pattern">

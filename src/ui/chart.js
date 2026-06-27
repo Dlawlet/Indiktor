@@ -253,8 +253,9 @@ export function createWaveChart(container, dark = true) {
   }
 
   // Draw a flat pattern as a parallel band (rectangle) from A-start to C-end,
-  // plus the ABC polyline inside showing the structure.
-  function _drawFlatABC(p, color, lineWidth) {
+  // plus the OABC polyline inside showing the structure.
+  // bold=true → selected state: thicker lines, brighter fill, O/A/B/C pivot markers.
+  function _drawFlatABC(p, color, lineWidth, bold = false) {
     const col = color.slice(0, 7);
 
     const prices = [p.aStart.price, p.aEnd.price, p.bEnd.price, p.cEnd.price];
@@ -263,10 +264,10 @@ export function createWaveChart(container, dark = true) {
     const t1    = p.aStart.time;
     const t2    = p.cEnd.time;
 
-    // Filled band: AreaSeries from roof level (fills downward with low opacity)
+    // Filled band
     const fill = chart.addAreaSeries({
-      topColor:    col + '22',
-      bottomColor: col + '08',
+      topColor:    col + (bold ? '3a' : '22'),
+      bottomColor: col + (bold ? '0e' : '08'),
       lineColor:   'transparent',
       lineWidth:   0,
       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
@@ -274,26 +275,26 @@ export function createWaveChart(container, dark = true) {
     fill.setData([{ time: t1, value: roof }, { time: t2, value: roof }]);
     flatSeries.push(fill);
 
-    // Top boundary — solid horizontal line
+    // Top boundary
     const topLine = chart.addLineSeries({
-      color: col + 'cc', lineWidth: lineWidth, lineStyle: LC.LineStyle.Solid,
+      color: col + (bold ? 'ff' : 'cc'), lineWidth, lineStyle: LC.LineStyle.Solid,
       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     });
     topLine.setData([{ time: t1, value: roof }, { time: t2, value: roof }]);
     flatSeries.push(topLine);
 
-    // Bottom boundary — solid horizontal line
+    // Bottom boundary
     const botLine = chart.addLineSeries({
-      color: col + 'cc', lineWidth: lineWidth, lineStyle: LC.LineStyle.Solid,
+      color: col + (bold ? 'ff' : 'cc'), lineWidth, lineStyle: LC.LineStyle.Solid,
       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     });
     botLine.setData([{ time: t1, value: floor }, { time: t2, value: floor }]);
     flatSeries.push(botLine);
 
-    // ABC polyline inside the band (shows the internal W/M structure)
+    // OABC polyline
     const abc = chart.addLineSeries({
-      color: col + (lineWidth > 1 ? 'ff' : '66'),
-      lineWidth: 1,
+      color: col + (bold ? 'ff' : '66'),
+      lineWidth: bold ? Math.max(lineWidth, 2) : 1,
       lineStyle: LC.LineStyle.Dashed,
       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     });
@@ -305,16 +306,38 @@ export function createWaveChart(container, dark = true) {
     ]);
     flatSeries.push(abc);
 
-    // Label marker at C-end
-    const confStr = p.confidence != null ? ` ${(p.confidence * 100).toFixed(0)}%` : '';
-    _flatMarkers.push({
-      time:     p.cEnd.time,
-      position: p.bias === 'bull' ? 'belowBar' : 'aboveBar',
-      color:    col + 'cc',
-      shape:    'circle',
-      text:     p.label + confStr,
-      size:     1,
-    });
+    if (bold) {
+      // O/A/B/C markers — position from the flat's direction (bias), not pivot type,
+      // so it stays correct even when non-consecutive pivots are used.
+      const bull = p.bias === 'bull';
+      const colM = col + 'ff';
+      [
+        { pt: p.aStart, label: 'O', high: !bull },
+        { pt: p.aEnd,   label: 'A', high:  bull },
+        { pt: p.bEnd,   label: 'B', high: !bull },
+        { pt: p.cEnd,   label: 'C', high:  bull },
+      ].forEach(({ pt, label, high }) => {
+        _flatMarkers.push({
+          time:     pt.time,
+          position: high ? 'aboveBar' : 'belowBar',
+          color:    colM,
+          shape:    'circle',
+          text:     label,
+          size:     2,
+        });
+      });
+    } else {
+      // Unselected: type + confidence label at C-end only
+      const confStr = p.confidence != null ? ` ${(p.confidence * 100).toFixed(0)}%` : '';
+      _flatMarkers.push({
+        time:     p.cEnd.time,
+        position: p.bias === 'bull' ? 'belowBar' : 'aboveBar',
+        color:    col + 'cc',
+        shape:    'circle',
+        text:     p.label + confStr,
+        size:     1,
+      });
+    }
   }
 
   return {
@@ -582,25 +605,25 @@ export function createWaveChart(container, dark = true) {
       patterns.forEach((p, i) => {
         const col = COL[p.type] ?? '#888888';
         if (i === selectedIdx) {
-          _drawFlatABC(p, col, 2);
-          // Key level lines for selected pattern
+          _drawFlatABC(p, col, 3, true); // bold — adds OABC markers internally
+
+          // O and A horizontal levels (the two spec reference levels)
           flatPriceLines.push(candles.createPriceLine({
-            price: p.aEnd.price, color: col + '88', lineWidth: 1,
-            lineStyle: LC.LineStyle.Dotted, axisLabelVisible: true, title: 'A-end',
+            price: p.aStart.price, color: col + '66', lineWidth: 1,
+            lineStyle: LC.LineStyle.Dotted, axisLabelVisible: true, title: 'O',
           }));
-          if (p.type === 'running' || p.type === 'expanding') {
-            flatPriceLines.push(candles.createPriceLine({
-              price: p.aStart.price, color: col + '55', lineWidth: 1,
-              lineStyle: LC.LineStyle.Dotted, axisLabelVisible: true, title: 'A-start',
-            }));
-          }
-          // Scroll chart to the pattern
+          flatPriceLines.push(candles.createPriceLine({
+            price: p.aEnd.price, color: col + 'aa', lineWidth: 1,
+            lineStyle: LC.LineStyle.Dotted, axisLabelVisible: true, title: 'A',
+          }));
+
+          // Scroll to pattern
           chart.timeScale().setVisibleRange({
             from: p.aStart.time - (p.cEnd.time - p.aStart.time) * 0.15,
             to:   p.cEnd.time  + (p.cEnd.time - p.aStart.time) * 0.4,
           });
         } else {
-          _drawFlatABC(p, col + '28', 1);
+          _drawFlatABC(p, col + '28', 1, false);
         }
       });
       refreshMarkers();
