@@ -56,14 +56,22 @@ export function createWaveChart(container, dark = true) {
   let projSeries = [];
   let annotSeries = [];     // annotation + similarity overlays
   let annotPriceLines = []; // price lines for annotation points
+  let flatSeries = [];      // historical flat pattern overlays
+  let flatPriceLines = [];
+  let liveSeries = [];      // in-progress flat overlay
+  let livePriceLines = [];
   let ghostSeries = null;
   let _allPivots = [];
   let _labelMap = new Map();
   let _extraMarkers = [];   // annotation / similarity markers
+  let _flatMarkers  = [];   // flat pattern label markers
   let _clickUnsub = null;
 
   function refreshMarkers() {
-    candles.setMarkers(mergeMarkers(buildPivotMarkers(T, _allPivots, _labelMap), _extraMarkers));
+    candles.setMarkers(mergeMarkers(
+      buildPivotMarkers(T, _allPivots, _labelMap),
+      [..._flatMarkers, ..._extraMarkers],
+    ));
   }
 
   function clearOverlaysImpl() {
@@ -242,6 +250,71 @@ export function createWaveChart(container, dark = true) {
       ]);
       projSeries.push(area);
     }
+  }
+
+  // Draw a flat pattern as a parallel band (rectangle) from A-start to C-end,
+  // plus the ABC polyline inside showing the structure.
+  function _drawFlatABC(p, color, lineWidth) {
+    const col = color.slice(0, 7);
+
+    const prices = [p.aStart.price, p.aEnd.price, p.bEnd.price, p.cEnd.price];
+    const roof  = Math.max(...prices);
+    const floor = Math.min(...prices);
+    const t1    = p.aStart.time;
+    const t2    = p.cEnd.time;
+
+    // Filled band: AreaSeries from roof level (fills downward with low opacity)
+    const fill = chart.addAreaSeries({
+      topColor:    col + '22',
+      bottomColor: col + '08',
+      lineColor:   'transparent',
+      lineWidth:   0,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    });
+    fill.setData([{ time: t1, value: roof }, { time: t2, value: roof }]);
+    flatSeries.push(fill);
+
+    // Top boundary — solid horizontal line
+    const topLine = chart.addLineSeries({
+      color: col + 'cc', lineWidth: lineWidth, lineStyle: LC.LineStyle.Solid,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    });
+    topLine.setData([{ time: t1, value: roof }, { time: t2, value: roof }]);
+    flatSeries.push(topLine);
+
+    // Bottom boundary — solid horizontal line
+    const botLine = chart.addLineSeries({
+      color: col + 'cc', lineWidth: lineWidth, lineStyle: LC.LineStyle.Solid,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    });
+    botLine.setData([{ time: t1, value: floor }, { time: t2, value: floor }]);
+    flatSeries.push(botLine);
+
+    // ABC polyline inside the band (shows the internal W/M structure)
+    const abc = chart.addLineSeries({
+      color: col + (lineWidth > 1 ? 'ff' : '66'),
+      lineWidth: 1,
+      lineStyle: LC.LineStyle.Dashed,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    });
+    abc.setData([
+      { time: p.aStart.time, value: p.aStart.price },
+      { time: p.aEnd.time,   value: p.aEnd.price },
+      { time: p.bEnd.time,   value: p.bEnd.price },
+      { time: p.cEnd.time,   value: p.cEnd.price },
+    ]);
+    flatSeries.push(abc);
+
+    // Label marker at C-end
+    const confStr = p.confidence != null ? ` ${(p.confidence * 100).toFixed(0)}%` : '';
+    _flatMarkers.push({
+      time:     p.cEnd.time,
+      position: p.bias === 'bull' ? 'belowBar' : 'aboveBar',
+      color:    col + 'cc',
+      shape:    'circle',
+      text:     p.label + confStr,
+      size:     1,
+    });
   }
 
   return {
@@ -476,6 +549,106 @@ export function createWaveChart(container, dark = true) {
       annotSeries.forEach(s => chart.removeSeries(s));
       annotSeries = [];
       _extraMarkers = [];
+      refreshMarkers();
+    },
+
+    // ── Flat pattern overlays ────────────────────────────────────────────────
+
+    drawFlatPatterns(patterns) {
+      flatSeries.forEach(s => chart.removeSeries(s));
+      flatPriceLines.forEach(pl => candles.removePriceLine(pl));
+      flatSeries = [];
+      flatPriceLines = [];
+      _flatMarkers = [];
+
+      const COL = { regular: '#f0a500', running: '#00d4ff', expanding: '#ff7744', contracting: '#5ccf7a' };
+
+      for (const p of patterns) {
+        const col = COL[p.type] ?? '#888888';
+        _drawFlatABC(p, col + 'aa', 1);
+      }
+      refreshMarkers();
+    },
+
+    highlightFlat(patterns, selectedIdx) {
+      flatSeries.forEach(s => chart.removeSeries(s));
+      flatPriceLines.forEach(pl => candles.removePriceLine(pl));
+      flatSeries = [];
+      flatPriceLines = [];
+      _flatMarkers = [];
+
+      const COL = { regular: '#f0a500', running: '#00d4ff', expanding: '#ff7744', contracting: '#5ccf7a' };
+
+      patterns.forEach((p, i) => {
+        const col = COL[p.type] ?? '#888888';
+        if (i === selectedIdx) {
+          _drawFlatABC(p, col, 2);
+          // Key level lines for selected pattern
+          flatPriceLines.push(candles.createPriceLine({
+            price: p.aEnd.price, color: col + '88', lineWidth: 1,
+            lineStyle: LC.LineStyle.Dotted, axisLabelVisible: true, title: 'A-end',
+          }));
+          if (p.type === 'running' || p.type === 'expanding') {
+            flatPriceLines.push(candles.createPriceLine({
+              price: p.aStart.price, color: col + '55', lineWidth: 1,
+              lineStyle: LC.LineStyle.Dotted, axisLabelVisible: true, title: 'A-start',
+            }));
+          }
+          // Scroll chart to the pattern
+          chart.timeScale().setVisibleRange({
+            from: p.aStart.time - (p.cEnd.time - p.aStart.time) * 0.15,
+            to:   p.cEnd.time  + (p.cEnd.time - p.aStart.time) * 0.4,
+          });
+        } else {
+          _drawFlatABC(p, col + '28', 1);
+        }
+      });
+      refreshMarkers();
+    },
+
+    drawLiveFlat(live) {
+      liveSeries.forEach(s => chart.removeSeries(s));
+      livePriceLines.forEach(pl => candles.removePriceLine(pl));
+      liveSeries = [];
+      livePriceLines = [];
+
+      const col = '#ffffff';
+      const ab = chart.addLineSeries({
+        color: col + 'bb', lineWidth: 2, lineStyle: LC.LineStyle.Dashed,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      });
+      ab.setData([
+        { time: live.aStart.time, value: live.aStart.price },
+        { time: live.aEnd.time,   value: live.aEnd.price },
+        { time: live.bEnd.time,   value: live.bEnd.price },
+      ]);
+      liveSeries.push(ab);
+
+      if (live.cTargets?.min != null) {
+        livePriceLines.push(candles.createPriceLine({
+          price: live.cTargets.min, color: col + '66', lineWidth: 1,
+          lineStyle: LC.LineStyle.Dotted, axisLabelVisible: true,
+          title: `C min (${live.possibleTypes.join('/')})`,
+        }));
+      }
+      if (live.cTargets?.max != null) {
+        livePriceLines.push(candles.createPriceLine({
+          price: live.cTargets.max, color: col + '44', lineWidth: 1,
+          lineStyle: LC.LineStyle.Dotted, axisLabelVisible: false, title: '',
+        }));
+      }
+    },
+
+    clearFlatPatterns() {
+      flatSeries.forEach(s => chart.removeSeries(s));
+      flatPriceLines.forEach(pl => candles.removePriceLine(pl));
+      flatSeries = [];
+      flatPriceLines = [];
+      _flatMarkers = [];
+      liveSeries.forEach(s => chart.removeSeries(s));
+      livePriceLines.forEach(pl => candles.removePriceLine(pl));
+      liveSeries = [];
+      livePriceLines = [];
       refreshMarkers();
     },
 

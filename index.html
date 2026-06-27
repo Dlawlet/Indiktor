@@ -62,50 +62,27 @@
     .tf-chip.mixed{color:var(--dim)}
     #chart{height:620px;width:100%}
     .side{display:flex;flex-direction:column;gap:1rem}
-    .lean{display:flex;align-items:center;gap:.7rem;padding:.9rem 1rem;font-size:.75rem}
-    .lean-label{font-family:'Orbitron',monospace;letter-spacing:.15em;font-weight:700}
-    .lean.up .lean-label{color:var(--green)} .lean.down .lean-label{color:var(--red)} .lean.mixed .lean-label{color:var(--amber)}
-    .lean-bar{flex:1;height:6px;background:rgba(255,48,88,0.3);border-radius:3px;overflow:hidden}
-    .lean-bar i{display:block;height:100%;background:var(--green)}
-    .lean-nums{font-size:.65rem;color:var(--dim);white-space:nowrap}
-    #scenarios{padding:.8rem;display:flex;flex-direction:column;gap:.8rem;max-height:70vh;overflow-y:auto}
-    .card{background:var(--bg3);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:3px;padding:.8rem}
-    .card-head{display:flex;align-items:center;gap:.5rem;font-size:.8rem}
-    .rank{font-family:'Orbitron',monospace;font-weight:700;color:var(--accent)}
-    .name{flex:1;font-weight:600;color:var(--text)}
-    .bias{font-size:.65rem;text-transform:uppercase;letter-spacing:.05em}
-    .bias.up{color:var(--green)} .bias.down{color:var(--red)}
-    .prob{font-weight:700;color:var(--amber)}
-    .prob-bar{height:4px;background:var(--border);border-radius:2px;margin:.5rem 0;overflow:hidden}
+    #pattern-list{padding:.6rem;display:flex;flex-direction:column;gap:.6rem;max-height:80vh;overflow-y:auto}
+    .pcard{background:var(--bg3);border:1px solid var(--border);border-left:3px solid var(--accent);
+      border-radius:3px;padding:.7rem;cursor:pointer;transition:box-shadow .15s}
+    .pcard:hover{box-shadow:0 0 6px var(--accent)}
+    .pcard.selected{box-shadow:0 0 12px var(--accent);border-color:var(--accent)}
+    .pcard.live{border-style:dashed;opacity:.9}
+    .pcard-head{display:flex;align-items:center;gap:.5rem;font-size:.78rem;margin-bottom:.4rem}
+    .pname{flex:1;font-weight:600;color:var(--text)}
+    .pbias{font-size:.62rem;text-transform:uppercase;letter-spacing:.05em}
+    .pbias.bull{color:var(--green)} .pbias.bear{color:var(--red)}
+    .live-badge{font-size:.5rem;letter-spacing:.12em;padding:.1rem .3rem;
+      border:1px solid var(--amber);color:var(--amber);border-radius:2px;white-space:nowrap}
+    .prob-bar{height:3px;background:var(--border);border-radius:2px;margin:.3rem 0;overflow:hidden}
     .prob-bar i{display:block;height:100%}
-    .row{display:flex;gap:.6rem;font-size:.68rem;margin-top:.35rem}
-    .row .k{color:var(--dim);min-width:80px}
-    .row .v{color:var(--text)} .row .v em{color:var(--dim);font-style:normal}
-    .rr{font-weight:600} .rr.good{color:var(--green)} .rr.ok{color:var(--amber)} .rr.bad{color:var(--red)}
-    .rationale{font-size:.66rem;color:var(--dim);margin-top:.55rem;line-height:1.45}
+    .prow{display:flex;gap:.5rem;font-size:.65rem;margin-top:.25rem}
+    .pk{color:var(--dim);min-width:56px}
+    .pv{color:var(--text)}
     .muted{color:var(--dim)}
-    .card{cursor:pointer;transition:box-shadow .15s}
-    .card:hover{box-shadow:0 0 6px var(--accent)}
-    .card.selected{box-shadow:0 0 12px var(--accent);border-color:var(--accent)}
-    .wave-pos{align-items:center;gap:.7rem;padding:.65rem 1rem;font-size:.7rem;
-      border-bottom:1px solid var(--border);display:none}
-    .wave-pos-label{font-family:'Orbitron',monospace;font-weight:700;letter-spacing:.08em;flex:1}
-    .wave-pos.up .wave-pos-label{color:var(--green)}
-    .wave-pos.down .wave-pos-label{color:var(--red)}
-    .wave-pos-bias{font-size:.6rem;letter-spacing:.1em}
-    .wave-pos-bias.up{color:var(--green)} .wave-pos-bias.down{color:var(--red)}
-    .wave-pos-hint{font-size:.55rem;color:var(--dim)}
     footer{padding:.8rem 1.6rem;font-size:.6rem;color:var(--dim);border-top:1px solid var(--border);line-height:1.6}
     #status{font-size:.62rem;color:var(--dim);padding:.4rem 1.6rem}
     #status.error{color:var(--red)}
-    .lock-btn{background:none;border:none;padding:.1rem .25rem;font-size:.75rem;
-      cursor:pointer;opacity:.4;transition:opacity .15s}
-    .lock-btn:hover,.lock-btn.locked{opacity:1;border:none}
-    button.lock-btn:hover{border:none !important;color:inherit}
-    .wave-pos-badge{font-size:.5rem;letter-spacing:.12em;padding:.1rem .35rem;
-      border:1px solid var(--amber);color:var(--amber);border-radius:2px}
-    .macro-badge{font-size:.48rem;letter-spacing:.1em;padding:.1rem .3rem;
-      border:1px solid var(--cyan);color:var(--cyan);border-radius:2px;margin-left:.3rem;vertical-align:middle;opacity:.75}
     button#annot-mode.on{opacity:1;color:var(--amber);border-color:var(--amber);background:rgba(240,165,0,0.08)}
     #annot-bar{align-items:center;gap:.8rem;padding:.5rem 1rem;background:rgba(240,165,0,0.06);
       border-top:1px solid rgba(240,165,0,0.3);font-size:.68rem;flex-wrap:wrap}
@@ -116,38 +93,40 @@
 <body>
   <header>
     <div>
-      <span class="logo">WAVE<span>ENGINE</span></span>
-      <span class="tag">FRACTAL (1m·15m·1h·4h·1d) · ELLIOTT SCENARIOS</span>
+      <span class="logo">INDIKTOR</span>
+      <span class="tag">FLAT PATTERN DETECTOR · 8 PATTERNS</span>
     </div>
     <div class="header-right">
       <span class="price" id="price">—</span>
-      <select id="asset" title="Switch asset">
+      <select id="asset" title="Changer d'actif">
         <option value="BTCUSDT">BTC</option>
         <option value="ETHUSDT">ETH</option>
         <option value="SOLUSDT">SOL</option>
       </select>
-      <label class="tag">SENSITIVITY
-        <select id="sensitivity" title="Zigzag reversal threshold (× ATR-14)">
-          <option value="2">High (2× ATR)</option>
-          <option value="3" selected>Medium (3× ATR)</option>
-          <option value="4">Low (4× ATR)</option>
-          <option value="5">Coarse (5× ATR)</option>
+      <label class="tag">SENSIBILITÉ
+        <select id="sensitivity" title="Seuil de renversement zigzag (× ATR-14)">
+          <option value="2">Fine (2× ATR)</option>
+          <option value="3" selected>Moyenne (3× ATR)</option>
+          <option value="4">Macro (4× ATR)</option>
+          <option value="5">Structurelle (5× ATR)</option>
         </select>
       </label>
-      <button id="theme-toggle" title="Toggle light / dark mode">☀</button>
-      <button id="snapshot" title="Save the active timeframe's scenarios to review later">📸 SNAPSHOT</button>
+      <label class="tag">CONFIANCE MIN
+        <select id="min-conf" title="Seuil de confiance minimum pour accepter un pattern">
+          <option value="0.40">Souple (40%)</option>
+          <option value="0.55" selected>Normale (55%)</option>
+          <option value="0.65">Stricte (65%)</option>
+          <option value="0.75">Très stricte (75%)</option>
+        </select>
+      </label>
+      <button id="theme-toggle" title="Thème clair/sombre">☀</button>
       <button id="refresh">↻ REFRESH</button>
-      <a class="navlink" href="review">REVIEW →</a>
     </div>
   </header>
 
   <main>
-    <div class="panel span-all">
-      <div class="panel-title">FRACTAL ALIGNMENT — weighted across 1m · 15m · 1h · 4h · daily</div>
-      <div class="lean mixed" id="alignment"></div>
-    </div>
     <div class="panel">
-      <div class="panel-title">PRICE STRUCTURE <span class="tabs" id="tabs"></span><button id="annot-mode" title="Annoter manuellement un pattern sur le graphique" style="font-family:inherit;font-size:.55rem;letter-spacing:.1em;padding:.2rem .5rem;opacity:.6">✏ ANNOTER</button></div>
+      <div class="panel-title">STRUCTURE DE PRIX <span class="tabs" id="tabs"></span><button id="annot-mode" title="Annoter manuellement un pattern" style="font-family:inherit;font-size:.55rem;letter-spacing:.1em;padding:.2rem .5rem;opacity:.6">✏ ANNOTER</button></div>
       <div id="chart"></div>
       <div id="annot-bar" style="display:none">
         <span id="annot-step"></span>
@@ -164,22 +143,16 @@
     </div>
     <div class="side">
       <div class="panel">
-        <div class="panel-title">ACTIVE TIMEFRAME LEAN</div>
-        <div class="lean mixed" id="lean"></div>
-      </div>
-      <div class="panel">
-        <div class="panel-title">SCENARIOS — ranked by model confidence</div>
-        <div id="wave-position" class="wave-pos" style="display:none"></div>
-        <div id="scenarios"></div>
+        <div class="panel-title">PATTERNS DÉTECTÉS</div>
+        <div id="pattern-list"></div>
       </div>
     </div>
   </main>
 
   <div id="status"></div>
   <footer>
-    Probabilities are <strong>model-derived confidence</strong> (Elliott rule + Fibonacci + structure quality),
-    not statistically calibrated outcomes — backtest calibration is a later phase.
-    Dashed red = invalidation level (the price that kills a count). Data: Binance REST.
+    Détection basée sur les niveaux : B casse A-start? × C casse A-end? → 4 types × 2 directions = 8 patterns.
+    Cliquer un pattern dans la liste pour le zoomer sur le chart. Données : Binance REST.
   </footer>
 
   <script type="module" src="src/ui/app.js"></script>
