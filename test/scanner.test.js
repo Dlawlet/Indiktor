@@ -2,7 +2,7 @@
 // All classification comes from 4-pivot arithmetic (O, A, B, C).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeRatios, classifyFromRatios, bandFit, detectFlatPatterns } from '../src/core/flats.js';
+import { computeRatios, classifyFromRatios, bandFit, detectFlatPatterns, candlesContained, trendContextOk } from '../src/core/flats.js';
 
 // Minimal pivot factory (no ATR — break tests fall back to price-fraction)
 const pv = (price, time = 0, type = 'L') => ({ price, time, type, close: price, atr: null, index: 0 });
@@ -138,6 +138,98 @@ test('detectFlatPatterns: returns empty for non-flat (pure trend) sequence', () 
   // rB=0.2 is way outside all bands — should be filtered or have very low conf
   const highConf = pats.filter((p) => p.confidence >= 0.40);
   assert.equal(highConf.length, 0, `unexpected high-conf patterns: ${JSON.stringify(highConf)}`);
+});
+
+// ── Containment filter ────────────────────────────────────────────────────────
+
+test('detectFlatPatterns: rejects when a candle wicks outside the flat range', () => {
+  // Bull flat O=100 A=150 B=118 C=160 — range [100, 160]
+  // Inject a candle at time=2.5 that wicks to 170 (above C=160) → invalid
+  const pivots = [
+    { price: 100, time: 1, type: 'L', close: 100, atr: 5, index: 0 },
+    { price: 150, time: 3, type: 'H', close: 150, atr: 5, index: 2 },
+    { price: 118, time: 5, type: 'L', close: 118, atr: 5, index: 4 },
+    { price: 160, time: 7, type: 'H', close: 160, atr: 5, index: 6 },
+  ];
+  const candles = [
+    { time: 1, open: 100, high: 100, low: 100, close: 100 }, // O
+    { time: 2, open: 120, high: 130, low: 100, close: 125 },
+    { time: 3, open: 145, high: 150, low: 140, close: 150 }, // A
+    { time: 4, open: 135, high: 170, low: 115, close: 118 }, // high=170 > roof=160 → breach
+    { time: 5, open: 120, high: 125, low: 118, close: 120 }, // B
+    { time: 6, open: 130, high: 145, low: 128, close: 140 },
+    { time: 7, open: 155, high: 160, low: 150, close: 158 }, // C
+  ];
+  const pats = detectFlatPatterns(pivots, { minConfidence: 0.10, candles });
+  assert.equal(pats.length, 0, 'pattern with candle breaching flat range should be rejected');
+});
+
+test('detectFlatPatterns: accepts when all candles are within the flat range', () => {
+  // Same geometry but the intermediate candle stays inside [100, 160]
+  const pivots = [
+    { price: 100, time: 1, type: 'L', close: 100, atr: 5, index: 0 },
+    { price: 150, time: 3, type: 'H', close: 150, atr: 5, index: 2 },
+    { price: 118, time: 5, type: 'L', close: 118, atr: 5, index: 4 },
+    { price: 160, time: 7, type: 'H', close: 160, atr: 5, index: 6 },
+  ];
+  const candles = [
+    { time: 1, open: 100, high: 100, low: 100, close: 100 },
+    { time: 2, open: 120, high: 130, low: 100, close: 125 },
+    { time: 3, open: 145, high: 150, low: 140, close: 150 },
+    { time: 4, open: 135, high: 155, low: 115, close: 118 }, // high=155 < roof=160 ✓
+    { time: 5, open: 120, high: 125, low: 118, close: 120 },
+    { time: 6, open: 130, high: 145, low: 108, close: 140 }, // low=108 > floor=100 ✓
+    { time: 7, open: 155, high: 160, low: 150, close: 158 },
+  ];
+  const pats = detectFlatPatterns(pivots, { minConfidence: 0.10, candles });
+  assert.ok(pats.length > 0, 'contained flat should be detected');
+});
+
+// ── trendContextOk unit tests ─────────────────────────────────────────────────
+
+const tp = (price) => ({ price });
+
+test('trendContextOk: passes when no context pivots exist (edge of data)', () => {
+  // Only O and C present — both context checks are skipped
+  const pivots = [tp(100), tp(150), tp(118), tp(160)];
+  assert.ok(trendContextOk(pivots, 0, 3, 50), 'should pass with no surrounding context');
+});
+
+test('trendContextOk: bull flat — pre-O above O (correct bearish approach)', () => {
+  // preO=200 > O=100, legA=50 → (200-100)*50=5000 > 0 ✓
+  const pivots = [tp(200), tp(100), tp(150), tp(118), tp(160)];
+  assert.ok(trendContextOk(pivots, 1, 4, 50), 'should pass with correct pre-O');
+});
+
+test('trendContextOk: bull flat — pre-O below O (wrong trend, price rose into O)', () => {
+  // preO=80 < O=100, legA=50 → (80-100)*50=-1000 < 0 → FAIL
+  const pivots = [tp(80), tp(100), tp(150), tp(118), tp(160)];
+  assert.ok(!trendContextOk(pivots, 1, 4, 50), 'should reject: pre-O below O means price rose into flat start');
+});
+
+test('trendContextOk: bull flat — post-C below C (correct bearish continuation)', () => {
+  // C=160, postC=120 < 160, legA=50 → (160-120)*50=2000 > 0 ✓
+  const pivots = [tp(200), tp(100), tp(150), tp(118), tp(160), tp(120)];
+  assert.ok(trendContextOk(pivots, 1, 4, 50), 'should pass with post-C below C');
+});
+
+test('trendContextOk: bull flat — post-C above C (price rose after flat, wrong direction)', () => {
+  // C=160, postC=180 > 160, legA=50 → (160-180)*50=-1000 < 0 → FAIL
+  const pivots = [tp(200), tp(100), tp(150), tp(118), tp(160), tp(180)];
+  assert.ok(!trendContextOk(pivots, 1, 4, 50), 'should reject: post-C above C means price rose after correction');
+});
+
+test('trendContextOk: bear flat — preO below O and postC above C (correct bullish context)', () => {
+  // Bear flat: legA=-110 (A below O). preO=50 < O=200 → (50-200)*(-110)=16500 > 0 ✓
+  // postC=180 > C=100 → (100-180)*(-110)=8800 > 0 ✓
+  const pivots = [tp(50), tp(200), tp(90), tp(160), tp(100), tp(180)];
+  assert.ok(trendContextOk(pivots, 1, 4, -110), 'should pass: bear flat in bullish trend');
+});
+
+test('trendContextOk: bear flat — postC below C (wrong: price fell after, means trend reversed)', () => {
+  // postC=80 < C=100 → (100-80)*(-110)=-2200 < 0 → FAIL
+  const pivots = [tp(50), tp(200), tp(90), tp(160), tp(100), tp(80)];
+  assert.ok(!trendContextOk(pivots, 1, 4, -110), 'should reject: post-C below C in bear flat means trend did not resume bullish');
 });
 
 test('detectFlatPatterns: pattern has required output fields', () => {

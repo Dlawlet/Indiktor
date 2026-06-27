@@ -282,6 +282,56 @@ function resolveScenarios(ratios, O, A, B, C, bTest, cTest, bp, candles) {
   ].filter(Boolean);
 }
 
+// ── Hard pre-filters (applied before classification) ─────────────────────────
+
+// 1. Containment: every candle wick between O and C must stay inside [floor, roof].
+//    The 4 pivot prices are the wick extremes; anything beyond them means a
+//    larger move occurred inside the flat that would invalidate the structure.
+export function candlesContained(O, A, B, C, candles) {
+  if (!candles || !candles.length) return true;
+
+  const floor = Math.min(O.price, A.price, B.price, C.price);
+  const roof  = Math.max(O.price, A.price, B.price, C.price);
+  const tol   = (roof - floor) * 1e-6; // float-safety only — no real slack
+
+  // Pivot.index is the candle-array position written by zigzag(); fall back to
+  // a linear scan only when the caller supplies hand-crafted pivots (tests).
+  const iStart = O.index != null ? O.index : candles.findIndex(c => c.time >= O.time);
+  const iEnd   = C.index != null ? C.index : candles.findIndex(c => c.time >= C.time);
+  if (iStart < 0 || iEnd < 0 || iEnd < iStart) return true;
+
+  for (let i = iStart; i <= iEnd; i++) {
+    const c = candles[i];
+    if (c.high > roof + tol || c.low < floor - tol) return false;
+  }
+  return true;
+}
+
+// 2. Trend context: a flat is corrective (counter-trend).
+//    legA > 0 (bull flat) means the correction went UP → main trend is bearish.
+//      • pivot BEFORE O must be above O (price was falling into O)
+//      • pivot AFTER C must be below C (price continues falling after C)
+//    legA < 0 (bear flat): mirror image.
+//    When a context pivot is absent (edge of data) that side is skipped.
+export function trendContextOk(pivots, startIdx, ci, legA) {
+  const O = pivots[startIdx];
+  const C = pivots[ci];
+
+  if (startIdx > 0) {
+    const preO = pivots[startIdx - 1];
+    // preO must be on the "upstream" side: (preO − O) has same sign as legA
+    if ((preO.price - O.price) * legA <= 0) return false;
+  }
+
+  if (ci + 1 < pivots.length) {
+    const postC = pivots[ci + 1];
+    // postC must continue the main trend: (C − postC) has same sign as legA
+    if ((C.price - postC.price) * legA <= 0) return false;
+  }
+
+  return true;
+}
+
 // ── Core window classifier ────────────────────────────────────────────────────
 
 function classifyWindow(O, A, B, C, bp, candles) {
@@ -339,6 +389,13 @@ function bestFlatFrom(pivots, startIdx, minConf, maxSpan, altGap, bp, candles) {
 
         const lenC = Math.abs(C.price - B.price) / Math.abs(legA);
         if (lenC < 0.10) continue;
+
+        // Hard filter 1 — all candles inside the flat must stay within [floor, roof]
+        if (!candlesContained(O, A, B, C, candles)) continue;
+
+        // Hard filter 2 — the flat must be corrective: trend before O and after C
+        //                  must run opposite to legA (main trend continuity)
+        if (!trendContextOk(pivots, startIdx, ci, legA)) continue;
 
         const cands = classifyWindow(O, A, B, C, bp, candles);
         if (!cands.length) continue;
