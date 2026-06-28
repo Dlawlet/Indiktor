@@ -38,28 +38,37 @@ Pure, unit-tested `core` modules — no DOM, no network:
    corrective + seg5 impulse), gated on a determined type, drawn for a selected/pinned hypothesis.
 9. **[`idb.js`](src/core/idb.js)** — minimal IndexedDB key→value store (snapshots, annotations).
 
-## Feedback loop
+## Feedback loop (100% client)
 
-Passive snapshots + path-aware evaluation + interpretable calibration:
+Capture → store → evaluate → estimate → optimise → calibrate → apply. Each browser tunes on its
+own snapshots (no shared/global config); `snapshots.html` is a local dashboard.
 
 - **[`snapshot.js`](src/core/snapshot.js)** — `takeSnapshot` freezes the ranked hypotheses;
   `evaluateSnapshotPath` walks the candles that printed **after** capture and resolves each
   hypothesis by **first touch** (TP zone vs hard invalidation), per-hypothesis, with a pending→
-  `expired` horizon. The snapshot's headline outcome is its **primary** hypothesis (no
-  "any-hit-wins" collapse across a mixed-bias beam).
-- **[`calibrate.js`](src/core/calibrate.js)** — interpretable 1-D logistic mapping from raw
-  confidence → empirical hit rate, plus a reliability table. Returns raw confidence unchanged
-  below `MIN_SAMPLES` (30) resolved hypotheses.
-- **[`snapshots.html`](snapshots.html)** — monitoring page: metrics, calibration reliability,
-  per-hypothesis outcomes, and a **Resolve** button that fetches recent candles per series and
-  path-resolves every pending snapshot.
+  `expired` horizon. Headline outcome = the **primary** hypothesis (no "any-hit-wins").
+- **[`params.js`](src/core/params.js)** — canonical tunable param set + stable provenance hash.
+  Every snapshot is tagged with its param config + hash, so outcomes attribute to a config.
+- **[`idb.js`](src/core/idb.js)** — IndexedDB: a `kv` store + a provenance-indexed `snapshots`
+  object store (no localStorage quota, no 60-cap).
+- **[`estimate.js`](src/core/estimate.js)** — partial-pooling / shrinkage hit-rate estimates per
+  segment (TF[, ×type]) and per (segment×param): `rate = (hits + k·prior)/(n + k)`.
+- **[`optimize.js`](src/core/optimize.js)** + **[`optimize.worker.js`](src/core/optimize.worker.js)** —
+  client param sweep: slide an as-of cursor over history, run the real predict pipeline per param
+  combo, resolve first-touch, rank via `estimate.js`. Runs in a Web Worker (non-blocking).
+- **[`calibrate.js`](src/core/calibrate.js)** — interpretable 1-D logistic mapping raw confidence →
+  empirical hit rate (+ reliability table); identity below `MIN_SAMPLES` (30). Kept separate from
+  param optimisation.
+- **[`timingStats.js`](src/core/timingStats.js)** — learns empirical leg-duration windows
+  ([p20,p80] per TF/type) from resolved hits; `timing.js` uses them when available, else the
+  Fibonacci priors (always soft).
+- **[`snapshots.html`](snapshots.html)** — dashboard: metrics, calibration reliability,
+  per-hypothesis outcomes, **Resolve** (path-resolve pending), and **⚙ Optimiser** (worker sweep →
+  per-segment proposals → human-in-the-loop **appliquer**, which the chart picks up via
+  `applied-params`).
 
-The UI captures a snapshot at most once every 2 h per visit, and passively path-resolves
-snapshots for the series currently on screen.
-
-> **Finding optimal parameters** is *not* done from passive snapshots (they are all captured with
-> whatever settings were active). Use the backtest sweep, which evaluates the same history across
-> a grid: `node tools/backtest.js --sweep` and `--atr-sweep`.
+The chart captures a snapshot at most once every 2 h **per (asset, TF)**, and passively
+path-resolves snapshots for the series on screen.
 
 ## Run
 
