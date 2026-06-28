@@ -4,6 +4,7 @@ import { createWaveChart } from './chart.js';
 import { detectFlatPatterns, detectLiveFlat, FLAT_COLORS, FLAT_LABELS } from '../core/flats.js';
 import { enumerateHypotheses, rankAndBeam } from '../core/predict.js';
 import { withTiming } from '../core/timing.js';
+import { timingWindows } from '../core/timingStats.js';
 import { takeSnapshot, evaluateSnapshotPath, computeMetrics } from '../core/snapshot.js';
 import { generateGhostPaths } from '../core/ghost.js';
 import { patternImageSpec, hypImageSpec } from '../core/imageSpec.js';
@@ -139,6 +140,13 @@ async function loadSnaps() {
   catch { return []; }
 }
 
+// ① Empirical leg-duration windows from resolved snapshots (per tf/type).
+// Empty until enough 'hit' outcomes exist → timing falls back to Fibonacci.
+async function loadTimingWindows() {
+  try { return timingWindows(await snapGetAll()); }
+  catch { return {}; }
+}
+
 // Coerce a legacy blob snapshot into a structured record (provenance back-filled).
 function toRecord(s) {
   const asset  = s.asset ?? s.params?.asset ?? null;
@@ -261,8 +269,9 @@ async function run() {
   // Predictive engine: enumerate hypotheses from confirmed pivots
   const livePrice  = candles[candles.length - 1].close;
   const currentBar = candles.length - 1;
+  const timingWins = await loadTimingWindows();  // ① empirical durations (Fibonacci fallback)
   let hyps = enumerateHypotheses(confirmed, livePrice);
-  hyps = withTiming(hyps, currentBar);
+  hyps = withTiming(hyps, currentBar, { windows: timingWins, tf: activeTf });
   hyps = rankAndBeam(hyps, 4);
   hyps = hyps.filter(h => h.confidence.value >= PRED_CONF_FLOOR);  // ④a confidence floor
 

@@ -9,7 +9,12 @@
 //
 // Usage:
 //   let hyps = enumerateHypotheses(pivots, livePrice);
-//   hyps = withTiming(hyps, currentBarIndex);
+//   hyps = withTiming(hyps, currentBarIndex, { windows, tf });  // windows optional
+//
+// When the ① loop has learned empirical duration windows they override the
+// Fibonacci priors per (tf, type); otherwise these priors are used.
+
+import { windowFor } from './timingStats.js';
 
 const B_RATIO = { lo: 0.382, hi: 1.618 };
 const C_RATIO = { lo: 0.500, hi: 2.000 };
@@ -43,7 +48,10 @@ const gm = (a, b) => Math.sqrt(a * b);
 // Returns NEUTRAL (1.0) when index data is unavailable — callers should not
 // penalise hypotheses that lack bar-index information.
 
-export function timingScore(hyp, currentBar = null) {
+// `win` (optional) supplies empirical [lo,hi] duration windows learned by the ①
+// loop: { b:[lo,hi], c:[lo,hi] }. When absent, the Fibonacci priors are used —
+// so this stays a soft, never-blocking factor with or without data.
+export function timingScore(hyp, currentBar = null, win = null) {
   const { O, A, B, C } = hyp.anchor;
 
   if (!O || !A || O.index == null || A.index == null) return NEUTRAL;
@@ -51,36 +59,34 @@ export function timingScore(hyp, currentBar = null) {
   const legA = Math.abs(A.index - O.index);
   if (legA === 0) return NEUTRAL;
 
+  const [bLo, bHi] = win?.b ?? [B_RATIO.lo, B_RATIO.hi];
+  const [cLo, cHi] = win?.c ?? [C_RATIO.lo, C_RATIO.hi];
   const stage = hyp.stage;
 
   // ── formingB: B is still forming; measure elapsed time since A ────────────
   if (stage === 'formingB') {
-    if (currentBar == null || A.index == null) return NEUTRAL;
+    if (currentBar == null) return NEUTRAL;
     const elapsed = currentBar - A.index;
     if (elapsed < 0) return NEUTRAL;
-    return softFactor(elapsed / legA, B_RATIO.lo, B_RATIO.hi);
+    return softFactor(elapsed / legA, bLo, bHi);
   }
 
   // ── formingC: B confirmed; measure B duration + elapsed-since-B ──────────
   if (stage === 'formingC') {
     if (!B || B.index == null) return NEUTRAL;
-    const legB = Math.abs(B.index - A.index);
-    const bScore = softFactor(legB / legA, B_RATIO.lo, B_RATIO.hi);
+    const bScore = softFactor(Math.abs(B.index - A.index) / legA, bLo, bHi);
 
     if (currentBar == null) return bScore;
     const elapsedC = currentBar - B.index;
     if (elapsedC < 0) return bScore;
-    const cScore = softFactor(elapsedC / legA, C_RATIO.lo, C_RATIO.hi);
-    return gm(bScore, cScore);
+    return gm(bScore, softFactor(elapsedC / legA, cLo, cHi));
   }
 
   // ── awaiting2°: all four confirmed; score both B and C durations ──────────
   if (stage === 'awaiting2°') {
     if (!B || !C || B.index == null || C.index == null) return NEUTRAL;
-    const legB   = Math.abs(B.index - A.index);
-    const legCDur = Math.abs(C.index - B.index);
-    const bScore = softFactor(legB   / legA, B_RATIO.lo, B_RATIO.hi);
-    const cScore = softFactor(legCDur / legA, C_RATIO.lo, C_RATIO.hi);
+    const bScore = softFactor(Math.abs(B.index - A.index) / legA, bLo, bHi);
+    const cScore = softFactor(Math.abs(C.index - B.index) / legA, cLo, cHi);
     return gm(bScore, cScore);
   }
 
@@ -95,9 +101,11 @@ export function timingScore(hyp, currentBar = null) {
 // Safe to call multiple times (e.g. as bars elapse): each call replaces the
 // previous timing factor without compounding.
 
-export function withTiming(hyps, currentBar = null) {
+export function withTiming(hyps, currentBar = null, opts = {}) {
+  const { windows = null, tf = null } = opts;
   return hyps.map(h => {
-    const ts   = timingScore(h, currentBar);
+    const win  = windows ? windowFor(windows, tf, h) : null;
+    const ts   = timingScore(h, currentBar, win);
     const prev = h.confidence.components?.timing ?? NEUTRAL;
     const newV = Math.min(1.0, h.confidence.value * (ts / (prev || 1e-10)));
     return {
