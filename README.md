@@ -34,9 +34,9 @@ Pure, unit-tested `core` modules — no DOM, no network:
    contradictory / impossible) + scale-stability and nesting coherence.
 7. **[`compose.js`](src/core/compose.js)** — vertical recursion (sub-flats inside legs) and
    horizontal chaining of consecutive flats.
-8. **[`ghost.js`](src/core/ghost.js)** — schematic "ghost candle" path (seg3 corrective + seg5
-   impulse) drawn on the chart for a selected/pinned hypothesis.
-9. **[`scanner.js`](src/core/scanner.js)** — historical multi-degree scan.
+8. **[`ghost.js`](src/core/ghost.js)** — per-branch "ghost candle" projection paths (seg3
+   corrective + seg5 impulse), gated on a determined type, drawn for a selected/pinned hypothesis.
+9. **[`idb.js`](src/core/idb.js)** — minimal IndexedDB key→value store (snapshots, annotations).
 
 ## Feedback loop
 
