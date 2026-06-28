@@ -65,6 +65,10 @@ function redrawPinnedGhost() {
 // Prediction scenario colors (match chart.js DARK.scenario)
 const PRED_COLORS = ['#00d4ff', '#b388ff', '#ffcc44', '#ff7744'];
 
+// ④a — Minimum confidence to SHOW a prediction. Below this a hypothesis is
+// noise (e.g. a typeless formingB at ~0.12) and is never rendered nor snapshotted.
+const PRED_CONF_FLOOR = 0.15;
+
 const STAGE_LABEL = {
   formingB:    'B EN COURS',
   formingC:    'C EN COURS',
@@ -178,6 +182,7 @@ async function run() {
   let hyps = enumerateHypotheses(confirmed, livePrice);
   hyps = withTiming(hyps, currentBar);
   hyps = rankAndBeam(hyps, 4);
+  hyps = hyps.filter(h => h.confidence.value >= PRED_CONF_FLOOR);  // ④a confidence floor
 
   lastMetrics = autoEvaluate(candles, sym(), activeTf);
   maybeCaptureSnap(hyps, livePrice);
@@ -241,8 +246,11 @@ function renderPatternList(patterns, live, hyps = []) {
   }
 
   // ── PRÉDICTIONS (predictive engine output) ───────────────────────────────────
-  if (hyps?.length) {
-    html += '<div class="section-label">PRÉDICTIONS</div>';
+  html += '<div class="section-label">PRÉDICTIONS</div>';
+  if (!hyps?.length) {
+    html += '<p class="muted" style="padding:1rem .8rem">Pas de scénario fiable '
+          + `(confiance &lt; ${(PRED_CONF_FLOOR * 100).toFixed(0)}%).</p>`;
+  } else {
     hyps.forEach((h, i) => {
       const col      = PRED_COLORS[i % PRED_COLORS.length];
       const cont     = continuation(h.bias);
