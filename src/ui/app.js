@@ -100,7 +100,8 @@ const PRED_COLORS = ['#00d4ff', '#b388ff', '#ffcc44', '#ff7744'];
 
 // ④a — Minimum confidence to SHOW a prediction. Below this a hypothesis is
 // noise (e.g. a typeless formingB at ~0.12) and is never rendered nor snapshotted.
-const PRED_CONF_FLOOR = 0.15;
+// `let` so the ① optimiser can apply a swept value (kv 'applied-params').
+let PRED_CONF_FLOOR = 0.15;
 
 const STAGE_LABEL = {
   formingB:    'B EN COURS',
@@ -716,4 +717,22 @@ el('annot-cancel').addEventListener('click', exitAnnotMode);
 const savedK = localStorage.getItem(LAST_K_KEY);
 if (savedK != null && el('sensitivity')) el('sensitivity').value = savedK;
 
-migrateStorage().finally(run);
+// Apply any params accepted from the ① optimiser (snapshots page → kv). Sets the
+// sensitivity input (k) and the prediction floor; the user sees k change (no
+// hidden override) and can still tune it manually afterward.
+async function applyStoredParams() {
+  let ap = null;
+  try { ap = await idbGet('applied-params'); } catch { /* none */ }
+  if (!ap) return;
+  if (ap.k != null && el('sensitivity')) {
+    el('sensitivity').value = ap.k;
+    localStorage.setItem(LAST_K_KEY, String(ap.k));
+  }
+  if (Number.isFinite(ap.predFloor)) PRED_CONF_FLOOR = ap.predFloor;
+}
+
+(async () => {
+  try { await migrateStorage(); } catch { /* best-effort */ }
+  try { await applyStoredParams(); } catch { /* best-effort */ }
+  run();
+})();

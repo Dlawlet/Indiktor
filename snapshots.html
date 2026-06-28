@@ -99,6 +99,9 @@
     .zk{color:var(--dim);min-width:50px}
 
     .empty-msg{padding:2rem;text-align:center;color:var(--dim);font-size:.7rem}
+    #opt-body{padding:0 1rem 1rem}
+    .opt-apply{font-size:.55rem;padding:.2rem .5rem}
+    .opt-apply.done{color:var(--green);border-color:rgba(0,255,136,.3)}
   </style>
 </head>
 <body>
@@ -109,6 +112,7 @@
   <div class="header-right">
     <a href="index.html" class="navlink">← CHART</a>
     <button id="resolve-btn" title="Récupère les bougies récentes et résout chaque snapshot (hit / miss / expiré)">↻ RÉSOUDRE</button>
+    <button id="optimize-btn" title="Balayage de paramètres sur l'historique (Web Worker)">⚙ OPTIMISER</button>
     <button id="refresh-btn">⟳ ACTUALISER</button>
     <button id="clear-btn" class="danger">✕ EFFACER TOUT</button>
   </div>
@@ -127,6 +131,12 @@
     <div class="fb-note" id="feedback-note"></div>
     <div class="fb-grid" id="feedback"></div>
   </div>
+  <div class="panel" id="optimize-panel" style="display:none">
+    <div class="panel-title">OPTIMISATION · BALAYAGE LOCAL (par segment)</div>
+    <div class="fb-note" id="opt-note"></div>
+    <div id="opt-body"></div>
+  </div>
+
   <div class="panel">
     <div class="panel-title">HISTORIQUE DES SNAPSHOTS</div>
     <div class="snap-table-wrap">
@@ -156,10 +166,16 @@
 import { computeMetrics, evaluateSnapshotPath } from './src/core/snapshot.js';
 import { exportDataset, calibrate, applyCalibration, MIN_SAMPLES } from './src/core/calibrate.js';
 import { fetchKlines } from './src/core/data.js';
-import { snapGetAll, snapPut, snapClear, snapBulkPut, idbGet, idbDel } from './src/core/idb.js';
+import { snapGetAll, snapPut, snapClear, snapBulkPut, idbGet, idbSet, idbDel } from './src/core/idb.js';
 import { buildParams, hashParams } from './src/core/params.js';
 
 const LEGACY_SNAP_KEY = 'pred-snaps-v1';  // pre-① blob (localStorage / kv) — migrated away
+const APPLIED_KEY = 'applied-params';     // kv: params accepted from the optimiser (read by the chart)
+// Sweep only the params that affect PREDICTIONS: k (zigzag pivots) and the
+// display/snapshot floor. (minConf drives the historical detector, not the
+// predictive hypotheses these snapshots score, so sweeping it would just split
+// identical observations across hashes.)
+const OPT_GRID = { k: [2, 3, 4, 5, 6], predFloor: [0.10, 0.15, 0.25] };
 
 async function loadSnaps() {
   try { return (await snapGetAll()).sort((a, b) => a.timestamp - b.timestamp); }
@@ -457,8 +473,89 @@ function setStatus(msg) {
   document.title = `INDIKTOR · Snapshots — ${msg}`;
 }
 
+// ── Optimise: client-side param sweep in a Web Worker ─────────────────────────
+
+let optWorker = null;
+
+async function runOptimize() {
+  const snaps = await loadSnaps();
+  const series = new Map();
+  for (const s of snaps) {
+    const asset = s.asset ?? s.params?.asset, tf = s.tf ?? s.params?.tf;
+    if (asset && tf) series.set(`${asset}|${tf}`, { asset, tf });
+  }
+  if (!series.size) { setStatus('Aucune série à optimiser (capturez d\'abord des snapshots).'); return; }
+
+  const btn = document.getElementById('optimize-btn');
+  btn.disabled = true; btn.textContent = '⏳ bougies…';
+  const fetched = [];
+  for (const { asset, tf } of series.values()) {
+    try { fetched.push({ candles: await fetchKlines(asset, tf, 1000), tf }); }
+    catch (e) { setStatus(`Échec ${asset} ${tf}: ${e.message}`, true); }
+  }
+  if (!fetched.length) { btn.disabled = false; btn.textContent = '⚙ OPTIMISER'; return; }
+
+  setStatus('Balayage en cours (Web Worker)…');
+  btn.textContent = '⏳ balayage…';
+  try {
+    if (!optWorker) optWorker = new Worker(new URL('./src/core/optimize.worker.js', import.meta.url), { type: 'module' });
+  } catch (e) {
+    btn.disabled = false; btn.textContent = '⚙ OPTIMISER';
+    setStatus('Web Worker indisponible: ' + e.message, true);
+    return;
+  }
+  optWorker.onmessage = (e) => {
+    btn.disabled = false; btn.textContent = '⚙ OPTIMISER';
+    if (!e.data?.ok) { setStatus('Erreur balayage: ' + (e.data?.error ?? '?'), true); return; }
+    renderProposals(e.data.result);
+    setStatus(`Balayage terminé : ${e.data.result.nObs} prévisions résolues · ${e.data.result.combos} configs.`);
+  };
+  optWorker.onerror = (err) => {
+    btn.disabled = false; btn.textContent = '⚙ OPTIMISER';
+    setStatus('Erreur worker: ' + err.message, true);
+  };
+  optWorker.postMessage({ series: fetched, gridSpec: OPT_GRID, opts: { byType: false, predFloor: 0.10, minN: 20 } });
+}
+
+function renderProposals(result) {
+  document.getElementById('optimize-panel').style.display = '';
+  const body = document.getElementById('opt-body');
+  const note = document.getElementById('opt-note');
+  const segs = Object.entries(result.proposals ?? {});
+  note.innerHTML = `Balayé ${result.combos} configs sur ${result.nObs} prévisions résolues. `
+    + `Taux <b>lissé</b> (shrinkage vers le global) — accepter applique la config au chart (human-in-the-loop).`;
+  if (!segs.length) {
+    body.innerHTML = `<p class="dim" style="padding:.5rem 0;font-size:.65rem">Pas assez d'observations résolues par segment (minN). Élargir l'historique ou laisser tourner plus longtemps.</p>`;
+    return;
+  }
+  const rows = segs.map(([seg, p]) => {
+    const k    = p.params?.k;
+    const fl   = p.params?.predFloor;
+    const rate = (p.rate * 100).toFixed(0);
+    const raw  = p.raw != null ? (p.raw * 100).toFixed(0) : '—';
+    return `<tr>
+      <td>${seg}</td>
+      <td>k=${k} · floor=${(fl * 100).toFixed(0)}%</td>
+      <td>${rate}% <span class="dim">(brut ${raw}%, n=${p.n})</span></td>
+      <td><button class="opt-apply" data-k="${k}" data-floor="${fl}">appliquer</button></td>
+    </tr>`;
+  }).join('');
+  body.innerHTML = `<table class="fb-table">
+    <thead><tr><th>Segment</th><th>Config proposée</th><th>Réussite (lissée)</th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+
+  body.querySelectorAll('.opt-apply').forEach(b => b.addEventListener('click', async () => {
+    const k = +b.dataset.k, predFloor = +b.dataset.floor;
+    try { await idbSet(APPLIED_KEY, { k, predFloor, appliedAt: Date.now() }); }
+    catch { setStatus('Échec application (IndexedDB).', true); return; }
+    b.textContent = '✓ appliqué'; b.classList.add('done');
+    setStatus(`✓ Config appliquée (k=${k}, floor=${(predFloor * 100).toFixed(0)}%) — rechargez le chart.`);
+  }));
+}
+
 document.getElementById('refresh-btn').addEventListener('click', render);
 document.getElementById('resolve-btn').addEventListener('click', resolveAll);
+document.getElementById('optimize-btn').addEventListener('click', runOptimize);
 
 document.getElementById('clear-btn').addEventListener('click', async () => {
   if (confirm('Effacer tous les snapshots ? Cette action est irréversible.')) {
