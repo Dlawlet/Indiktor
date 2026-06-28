@@ -244,33 +244,28 @@ export function withFractal(hyps, opts = {}) {
     subHyps = null, goal = null, currentPrice = null,
   } = opts;
 
-  // Enrich each hyp with real scale_stability and nesting_coherence
-  const enriched = hyps.map(h => {
-    const ss  = scaleStability(candles, h, baseK, delta);
-    const nc  = nestingCoherence(h, subHyps);
-
-    // Recompute confidence with real components replacing the stubs.
-    // The two stubs were 0.6 (neutral); we replace them proportionally.
-    const oldSS = h.confidence.components.scale_stability  ?? 0.60;
-    const oldNC = h.confidence.components.nesting_coherence ?? 0.60;
-    const ratio = (ss * nc) / ((oldSS * oldNC) || 1e-10);
-    const newV  = Math.min(1.0, h.confidence.value * ratio);
-
-    return {
-      ...h,
-      confidence: {
-        ...h.confidence,
-        value: newV,
-        components: {
-          ...h.confidence.components,
-          scale_stability:    ss,
-          nesting_coherence:  nc,
-        },
+  // scale_stability and nesting_coherence belong to the POST-MORTEM detector's
+  // confidence model (flats.js §A.8), NOT the predictive one. Predictive
+  // confidence is exactly:
+  //   stage_maturity × partial_band_fit × channel_cleanliness × fractal_consistency × timing
+  // Record ss/nc as informational metadata, but DO NOT fold them into
+  // confidence.value — the previous version normalised them against phantom 0.6
+  // stubs that predictiveConfidence never emitted, inflating value up to ~3×.
+  // The only value adjustment here is the fractal goal constraint
+  // (fractal_consistency) applied by applyFractalConstraints below.
+  const enriched = hyps.map(h => ({
+    ...h,
+    confidence: {
+      ...h.confidence,
+      components: {
+        ...h.confidence.components,
+        scale_stability:   scaleStability(candles, h, baseK, delta),
+        nesting_coherence: nestingCoherence(h, subHyps),
       },
-    };
-  });
+    },
+  }));
 
-  // Apply higher-TF constraints
+  // Apply higher-TF constraints (touches fractal_consistency + prunes impossible).
   const { kept } = applyFractalConstraints(enriched, goal, { currentPrice });
   return kept;
 }
