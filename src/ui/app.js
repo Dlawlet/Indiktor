@@ -7,7 +7,8 @@ import { withTiming } from '../core/timing.js';
 import { takeSnapshot, evaluateSnapshotPath, computeMetrics } from '../core/snapshot.js';
 import { generateGhostPaths } from '../core/ghost.js';
 import { patternImageSpec, hypImageSpec } from '../core/imageSpec.js';
-import { idbGet, idbSet } from '../core/idb.js';
+import { idbGet, idbSet, idbDel, snapGetAll, snapPut, snapBulkPut } from '../core/idb.js';
+import { buildParams, hashParams } from '../core/params.js';
 
 const TIMEFRAMES = ['1m', '15m', '1h', '4h', '1d'];
 const TF_LIMIT   = 500;
@@ -15,8 +16,8 @@ const TF_LIMIT   = 500;
 const THEME_KEY  = 'wave-engine-theme'; // sync at boot to avoid theme flash
 const LAST_TF_KEY = 'wave-last-tf';
 const LAST_K_KEY  = 'wave-last-k';
-const ANNOT_DB_KEY = 'annotations';     // IndexedDB key (was localStorage)
-const SNAP_DB_KEY  = 'pred-snaps-v1';   // IndexedDB key (was localStorage)
+const ANNOT_DB_KEY = 'annotations';       // IndexedDB kv key (was localStorage)
+const LEGACY_SNAP_KEY = 'pred-snaps-v1';  // pre-① blob key (localStorage, then kv) — migrated away
 
 const el      = (id) => document.getElementById(id);
 const sym     = ()   => el('asset').value;
@@ -127,66 +128,93 @@ let imageMode = false;
 const CONT_HEX = { bull: '#00ff88', bear: '#ff3058' };
 const contColor = (bias) => CONT_HEX[continuation(bias).cls];
 
-// ── Snapshot persistence (IndexedDB) ──────────────────────────────────────────
+// ── Snapshot persistence (structured IndexedDB store) ─────────────────────────
 const SNAP_INTERVAL = 2 * 60 * 60 * 1000;  // 2h
-const MAX_SNAPS     = 60;
 
+// All snapshots, oldest-first. Records carry top-level asset/tf/paramHash for
+// indexing + provenance (① attribution).
 async function loadSnaps() {
-  try { return (await idbGet(SNAP_DB_KEY)) ?? []; }
+  try { return (await snapGetAll()).sort((a, b) => a.timestamp - b.timestamp); }
   catch { return []; }
 }
 
-async function saveSnaps(list) {
-  try { await idbSet(SNAP_DB_KEY, list.slice(-MAX_SNAPS)); }
-  catch { /* IndexedDB unavailable (private mode) — snapshots are best-effort */ }
+// Coerce a legacy blob snapshot into a structured record (provenance back-filled).
+function toRecord(s) {
+  const asset  = s.asset ?? s.params?.asset ?? null;
+  const tf     = s.tf    ?? s.params?.tf    ?? null;
+  const params = buildParams({
+    k:         s.params?.k ?? s.params?.sensitivity,
+    minConf:   s.params?.minConf,
+    predFloor: s.params?.predFloor,
+  });
+  return { ...s, asset, tf, paramHash: s.paramHash ?? hashParams(params) };
 }
 
-// One-time migration of any pre-② data out of localStorage into IndexedDB.
-async function migrateLocalStorage() {
-  for (const [oldKey, dbKey] of [['pred-snaps-v1', SNAP_DB_KEY], ['wave-annotations', ANNOT_DB_KEY]]) {
-    const raw = localStorage.getItem(oldKey);
-    if (raw == null) continue;
+// One-time migration: pre-② localStorage blob and ②-era kv blob → structured
+// store; legacy annotations localStorage → kv. Then drop the old keys.
+async function migrateStorage() {
+  // annotations: localStorage → kv (② path, for users who skipped it)
+  const a = localStorage.getItem('wave-annotations');
+  if (a != null) {
     try {
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr) && arr.length && (await idbGet(dbKey)) == null) {
-        await idbSet(dbKey, arr);
-      }
-    } catch { /* corrupt — drop */ }
-    localStorage.removeItem(oldKey);
+      const arr = JSON.parse(a);
+      if (Array.isArray(arr) && arr.length && (await idbGet(ANNOT_DB_KEY)) == null) await idbSet(ANNOT_DB_KEY, arr);
+    } catch { /* drop */ }
+    localStorage.removeItem('wave-annotations');
   }
+  // snapshots: localStorage blob OR kv blob → structured store (only if empty)
+  let legacy = null;
+  const ls = localStorage.getItem(LEGACY_SNAP_KEY);
+  if (ls != null) { try { legacy = JSON.parse(ls); } catch {} localStorage.removeItem(LEGACY_SNAP_KEY); }
+  if (!Array.isArray(legacy)) { try { legacy = await idbGet(LEGACY_SNAP_KEY); } catch {} }
+  if (Array.isArray(legacy) && legacy.length) {
+    try {
+      const existing = await snapGetAll();
+      if (!existing.length) await snapBulkPut(legacy.map(toRecord));
+    } catch { /* best-effort */ }
+  }
+  try { await idbDel(LEGACY_SNAP_KEY); } catch {}
 }
 
-// Path-aware evaluation: walk the candles that printed since each snapshot.
-// Only snapshots captured on the currently-loaded series (same asset+tf) can be
-// resolved here — others are left untouched until their series is viewed, or
-// resolved in bulk from the snapshots page (which fetches per series).
+// Path-aware evaluation: walk the candles that printed since each snapshot, but
+// only for snapshots captured on the currently-loaded series (same asset+tf).
+// Re-persists only the records whose outcome actually changed.
 async function autoEvaluate(candles, asset, tf) {
   const snaps = await loadSnaps();
   if (!snaps.length) return null;
   const updated = snaps.map(s => {
     const closed  = s.outcome != null && s.outcome !== 'pending';
-    const matches = s.params?.asset === asset && s.params?.tf === tf;
-    return (closed || !matches) ? s : evaluateSnapshotPath(s, candles);
+    const matches = s.asset === asset && s.tf === tf;
+    if (closed || !matches) return s;
+    const next = evaluateSnapshotPath(s, candles); // spreads s → keeps asset/tf/paramHash/id
+    return next;
   });
-  await saveSnaps(updated);
+  for (let i = 0; i < updated.length; i++) {
+    if (updated[i].outcome !== snaps[i].outcome) {
+      try { await snapPut(updated[i]); } catch { /* best-effort */ }
+    }
+  }
   return computeMetrics(updated);
 }
 
 async function maybeCaptureSnap(hyps, livePrice) {
   if (!hyps?.length) return;
+  const asset = sym(), tf = activeTf, now = Date.now();
   const snaps = await loadSnaps();
-  const now   = Date.now();
-  const asset = sym(), tf = activeTf;
-  // Throttle PER series (asset+tf), not globally: a single global "last" would
-  // suppress capture for every other asset/tf viewed within the interval.
-  const lastForSeries = snaps.filter(s => s.params?.asset === asset && s.params?.tf === tf).pop();
+  // Throttle PER series (asset+tf), not globally.
+  const lastForSeries = snaps.filter(s => s.asset === asset && s.tf === tf).pop();
   if (lastForSeries && now - lastForSeries.timestamp < SNAP_INTERVAL) return;
-  snaps.push(takeSnapshot(hyps, livePrice, {
+
+  const params    = buildParams({ k: +el('sensitivity').value, minConf: +el('min-conf').value, predFloor: PRED_CONF_FLOOR });
+  const paramHash = hashParams(params);
+  const snap = takeSnapshot(hyps, livePrice, {
     timestamp: now,
     id:        `${asset}_${tf}_${now}`,
-    params:    { sensitivity: +el('sensitivity').value, minConf: +el('min-conf').value, asset, tf },
-  }));
-  await saveSnaps(snaps);
+    params:    { ...params, asset, tf },
+  });
+  // Top-level indexed/provenance fields.
+  snap.asset = asset; snap.tf = tf; snap.paramHash = paramHash;
+  try { await snapPut(snap); } catch { /* best-effort */ }
 }
 
 function buildMetricsStr(metrics) {
@@ -688,4 +716,4 @@ el('annot-cancel').addEventListener('click', exitAnnotMode);
 const savedK = localStorage.getItem(LAST_K_KEY);
 if (savedK != null && el('sensitivity')) el('sensitivity').value = savedK;
 
-migrateLocalStorage().finally(run);
+migrateStorage().finally(run);

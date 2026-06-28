@@ -156,18 +156,22 @@
 import { computeMetrics, evaluateSnapshotPath } from './src/core/snapshot.js';
 import { exportDataset, calibrate, applyCalibration, MIN_SAMPLES } from './src/core/calibrate.js';
 import { fetchKlines } from './src/core/data.js';
-import { idbGet, idbSet, idbDel } from './src/core/idb.js';
+import { snapGetAll, snapPut, snapClear, snapBulkPut, idbGet, idbDel } from './src/core/idb.js';
+import { buildParams, hashParams } from './src/core/params.js';
 
-const SNAP_DB_KEY = 'pred-snaps-v1';  // IndexedDB key (snapshots no longer in localStorage)
+const LEGACY_SNAP_KEY = 'pred-snaps-v1';  // pre-① blob (localStorage / kv) — migrated away
 
 async function loadSnaps() {
-  try { return (await idbGet(SNAP_DB_KEY)) ?? []; }
+  try { return (await snapGetAll()).sort((a, b) => a.timestamp - b.timestamp); }
   catch { return []; }
 }
 
-async function saveSnaps(list) {
-  try { await idbSet(SNAP_DB_KEY, list); }
-  catch { /* best-effort */ }
+// Coerce a legacy blob snapshot into a structured record (provenance back-filled).
+function toRecord(s) {
+  const asset  = s.asset ?? s.params?.asset ?? null;
+  const tf     = s.tf    ?? s.params?.tf    ?? null;
+  const params = buildParams({ k: s.params?.k ?? s.params?.sensitivity, minConf: s.params?.minConf, predFloor: s.params?.predFloor });
+  return { ...s, asset, tf, paramHash: s.paramHash ?? hashParams(params) };
 }
 
 function fmt(ts) {
@@ -260,7 +264,7 @@ function paramTable(groups, label, formatKey) {
 }
 
 function renderFeedback(snaps) {
-  const byK    = groupBy(snaps, s => s.params?.sensitivity);
+  const byK    = groupBy(snaps, s => s.params?.k ?? s.params?.sensitivity);
   const byConf = groupBy(snaps, s => s.params?.minConf);
 
   document.getElementById('feedback').innerHTML =
@@ -362,9 +366,9 @@ function renderSnapList(snaps) {
   const sorted = [...snaps].reverse();
   tbody.innerHTML = sorted.map((snap, idx) => {
     const realIdx = snaps.length - 1 - idx;
-    const asset   = snap.params?.asset ?? snap.id?.split('_')[0] ?? '—';
-    const tf      = snap.params?.tf    ?? snap.id?.split('_')[1] ?? '—';
-    const k       = snap.params?.sensitivity ?? '—';
+    const asset   = snap.asset ?? snap.params?.asset ?? snap.id?.split('_')[0] ?? '—';
+    const tf      = snap.tf    ?? snap.params?.tf    ?? snap.id?.split('_')[1] ?? '—';
+    const k       = snap.params?.k ?? snap.params?.sensitivity ?? '—';
     const conf    = snap.params?.minConf != null ? (snap.params.minConf * 100).toFixed(0) + '%' : '—';
     const nHyps   = snap.hypotheses?.length ?? 0;
 
@@ -418,7 +422,7 @@ async function resolveAll() {
   const groups = new Map();
   for (const s of snaps) {
     if (s.outcome != null && s.outcome !== 'pending') continue;
-    const asset = s.params?.asset, tf = s.params?.tf;
+    const asset = s.asset ?? s.params?.asset, tf = s.tf ?? s.params?.tf;
     if (!asset || !tf) continue;
     const key = `${asset}|${tf}`;
     if (!groups.has(key)) groups.set(key, { asset, tf });
@@ -433,16 +437,17 @@ async function resolveAll() {
   }
 
   let resolved = 0;
-  const updated = snaps.map(s => {
+  for (const s of snaps) {
     const closed = s.outcome != null && s.outcome !== 'pending';
-    if (closed) return s;
-    const candles = candlesByKey.get(`${s.params?.asset}|${s.params?.tf}`);
-    if (!candles) return s;
-    const next = evaluateSnapshotPath(s, candles);
-    if (next.outcome != null && next.outcome !== 'pending') resolved++;
-    return next;
-  });
-  await saveSnaps(updated);
+    if (closed) continue;
+    const candles = candlesByKey.get(`${s.asset ?? s.params?.asset}|${s.tf ?? s.params?.tf}`);
+    if (!candles) continue;
+    const next = evaluateSnapshotPath(s, candles); // spreads s → keeps id/asset/tf/paramHash
+    if (next.outcome !== s.outcome) {
+      try { await snapPut(next); } catch { /* best-effort */ }
+      if (next.outcome != null && next.outcome !== 'pending') resolved++;
+    }
+  }
   setStatus(`${resolved} snapshot(s) résolu(s) sur ${groups.size} série(s).`);
   render();
 }
@@ -457,24 +462,25 @@ document.getElementById('resolve-btn').addEventListener('click', resolveAll);
 
 document.getElementById('clear-btn').addEventListener('click', async () => {
   if (confirm('Effacer tous les snapshots ? Cette action est irréversible.')) {
-    await idbDel(SNAP_DB_KEY);
+    await snapClear();
     render();
   }
 });
 
-// One-time migration: pull any pre-② snapshots out of localStorage into IndexedDB
-// (this page may be opened before index.html runs its own migration).
+// One-time migration: move any pre-① blob (localStorage or kv) into the
+// structured store (this page may open before index.html runs its migration).
 async function migrateThenRender() {
-  const raw = localStorage.getItem('pred-snaps-v1');
-  if (raw != null) {
+  let legacy = null;
+  const ls = localStorage.getItem(LEGACY_SNAP_KEY);
+  if (ls != null) { try { legacy = JSON.parse(ls); } catch {} localStorage.removeItem(LEGACY_SNAP_KEY); }
+  if (!Array.isArray(legacy)) { try { legacy = await idbGet(LEGACY_SNAP_KEY); } catch {} }
+  if (Array.isArray(legacy) && legacy.length) {
     try {
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr) && arr.length && (await idbGet(SNAP_DB_KEY)) == null) {
-        await idbSet(SNAP_DB_KEY, arr);
-      }
-    } catch { /* corrupt — drop */ }
-    localStorage.removeItem('pred-snaps-v1');
+      const existing = await snapGetAll();
+      if (!existing.length) await snapBulkPut(legacy.map(toRecord));
+    } catch { /* best-effort */ }
   }
+  try { await idbDel(LEGACY_SNAP_KEY); } catch {}
   render();
 }
 
