@@ -6,6 +6,7 @@ import { enumerateHypotheses, rankAndBeam } from '../core/predict.js';
 import { withTiming } from '../core/timing.js';
 import { takeSnapshot, evaluateSnapshotPath, computeMetrics } from '../core/snapshot.js';
 import { generateGhostPaths } from '../core/ghost.js';
+import { patternImageSpec, hypImageSpec } from '../core/imageSpec.js';
 import { idbGet, idbSet } from '../core/idb.js';
 
 const TIMEFRAMES = ['1m', '15m', '1h', '4h', '1d'];
@@ -119,6 +120,12 @@ function continuation(bias) {
     cls:   down ? 'bear' : 'bull', // reuse existing red/green .pbias classes
   };
 }
+
+// ⑥ Image-mode ("schéma") state + continuation colour (green=up, red=down) used
+// for the impulse strokes. continuation(bias).cls already maps to bull/bear.
+let imageMode = false;
+const CONT_HEX = { bull: '#00ff88', bear: '#ff3058' };
+const contColor = (bias) => CONT_HEX[continuation(bias).cls];
 
 // ── Snapshot persistence (IndexedDB) ──────────────────────────────────────────
 const SNAP_INTERVAL = 2 * 60 * 60 * 1000;  // 2h
@@ -240,6 +247,7 @@ async function run() {
   waveChart.setZigzag(pivots);
   waveChart.clearFlatPatterns();
   waveChart.clearPredictions();
+  waveChart.clearImage();
   waveChart.drawFlatPatterns(patterns);
   if (live) waveChart.drawLiveFlat(live);
   waveChart.fit();
@@ -267,6 +275,79 @@ function renderTabs() {
       run();
     })
   );
+}
+
+// ── Selection rendering (normal vs ⑥ image mode) ──────────────────────────────
+
+// Draw a predictive hypothesis: image grammar if imageMode, else drawPrediction
+// + ghost candles. Sets the selection state.
+function showPredictionSelection(i) {
+  const data = cache[activeTf];
+  const hyp  = data?.hyps?.[i];
+  if (!hyp) return;
+  selectedHypIdx = i;
+  selectedIdx    = null;
+  waveChart.clearImage();
+  if (imageMode) {
+    waveChart.clearFlatPatterns();
+    waveChart.clearPredictions();
+    waveChart.clearGhostCandles();
+    waveChart.drawImage(hypImageSpec(hyp), contColor(hyp.bias));
+  } else {
+    waveChart.clearFlatPatterns();
+    waveChart.drawFlatPatterns(data.patterns);
+    if (data.live) waveChart.drawLiveFlat(data.live);
+    const color = PRED_COLORS[i % PRED_COLORS.length];
+    waveChart.drawPrediction(hyp, color);
+    const lp    = data.candles[data.candles.length - 1].close;
+    const paths = generateGhostPaths(hyp, lp, data.candles);
+    waveChart.drawGhostPaths(paths, color);
+    const mx = ghostMaxTime(paths);
+    if (mx) waveChart.extendRightEdge(mx);
+  }
+  redrawPinnedGhost();
+}
+
+// Draw a historical flat: image grammar if imageMode, else highlightFlat.
+function showHistoricalSelection(idx) {
+  const data = cache[activeTf];
+  const p    = data?.patterns?.[idx];
+  if (!p) return;
+  selectedIdx    = idx;
+  selectedHypIdx = null;
+  waveChart.clearPredictions();
+  waveChart.clearGhostCandles();
+  waveChart.clearImage();
+  if (imageMode) {
+    waveChart.clearFlatPatterns(); // hide candle-by-candle flat overlays
+    waveChart.drawImage(patternImageSpec(p, data.pivots.filter(x => !x.tentative)), contColor(p.bias));
+  } else {
+    waveChart.highlightFlat(data.patterns, idx);
+  }
+  redrawPinnedGhost();
+}
+
+// Deselect everything → restore the base flat overlays.
+function clearSelection() {
+  selectedIdx    = null;
+  selectedHypIdx = null;
+  const data = cache[activeTf];
+  waveChart.clearPredictions();
+  waveChart.clearGhostCandles();
+  waveChart.clearImage();
+  waveChart.clearFlatPatterns();
+  if (data) {
+    waveChart.drawFlatPatterns(data.patterns);
+    if (data.live) waveChart.drawLiveFlat(data.live);
+  }
+  redrawPinnedGhost();
+}
+
+// Re-render whatever is selected (used when toggling image mode).
+function redrawSelection() {
+  if (selectedHypIdx != null)      showPredictionSelection(selectedHypIdx);
+  else if (selectedIdx != null)    showHistoricalSelection(selectedIdx);
+  else                             waveChart.clearImage();
 }
 
 // ── Liste des patterns (panneau droit) ───────────────────────────────────────
@@ -388,28 +469,10 @@ function renderPatternList(patterns, live, hyps = []) {
       const data = cache[activeTf];
       if (!data) return;
       const i   = +card.dataset.hyp;
-      const hyp = data.hyps?.[i];
-      if (!hyp) return;
+      if (!data.hyps?.[i]) return;
 
-      if (selectedHypIdx === i) {
-        selectedHypIdx = null;
-        waveChart.clearPredictions();
-        waveChart.clearGhostCandles();
-        redrawPinnedGhost();
-      } else {
-        selectedHypIdx = i;
-        selectedIdx    = null;
-        waveChart.clearFlatPatterns();
-        waveChart.drawFlatPatterns(data.patterns);
-        if (data.live) waveChart.drawLiveFlat(data.live);
-        const color = PRED_COLORS[i % PRED_COLORS.length];
-        waveChart.drawPrediction(hyp, color);
-        const lp    = data.candles[data.candles.length - 1].close;
-        const paths = generateGhostPaths(hyp, lp, data.candles);
-        waveChart.drawGhostPaths(paths, color);
-        const mx = ghostMaxTime(paths);
-        if (mx) waveChart.extendRightEdge(mx);
-      }
+      if (selectedHypIdx === i) clearSelection();
+      else                      showPredictionSelection(i);
       renderPatternList(data.patterns, data.live, data.hyps);
     });
   });
@@ -450,20 +513,8 @@ function renderPatternList(patterns, live, hyps = []) {
       const data = cache[activeTf];
       if (!data) return;
       const idx = +card.dataset.idx;
-      if (selectedIdx === idx) {
-        selectedIdx = null;
-        waveChart.clearFlatPatterns();
-        waveChart.drawFlatPatterns(data.patterns);
-        if (data.live) waveChart.drawLiveFlat(data.live);
-        redrawPinnedGhost();
-      } else {
-        selectedIdx    = idx;
-        selectedHypIdx = null;
-        waveChart.clearPredictions();
-        waveChart.clearGhostCandles();  // clear active pred ghost when selecting historical
-        waveChart.highlightFlat(data.patterns, idx);
-        redrawPinnedGhost();
-      }
+      if (selectedIdx === idx) clearSelection();
+      else                     showHistoricalSelection(idx);
       renderPatternList(data.patterns, data.live, data.hyps);
     });
   });
@@ -622,6 +673,11 @@ el('sensitivity').addEventListener('change', () => {
 });
 el('min-conf').addEventListener('change', () => { cache = {}; run(); });
 el('refresh').addEventListener('click', () => { cache = {}; run(); });
+el('image-mode').addEventListener('click', () => {
+  imageMode = !imageMode;
+  el('image-mode').classList.toggle('on', imageMode);
+  redrawSelection();  // redraw the current selection in the new mode (or clear image)
+});
 el('annot-mode').addEventListener('click', () => { if (annotMode) exitAnnotMode(); else enterAnnotMode(); });
 el('annot-confirm').addEventListener('click', confirmAnnotation);
 el('annot-cancel').addEventListener('click', exitAnnotMode);

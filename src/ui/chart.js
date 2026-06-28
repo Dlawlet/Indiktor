@@ -64,6 +64,8 @@ export function createWaveChart(container, dark = true) {
   let ghostProjSeries      = [];   // schematic lines for active ghost paths
   let pinnedGhostList      = [];   // pinned ghost candle series (one per branch, persists across clicks)
   let pinnedGhostProjLines = [];   // schematic lines for pinned ghost paths
+  let imageSeries          = [];   // ⑥ "image" grammar overlays (impulses/rails/zone bands)
+  let imageMarkerSeries    = null; // transparent carrier for image pivot labels
   let predSeries           = [];   // predictive hypothesis overlays
   let predPriceLines = [];
   let _predMarkers  = [];
@@ -726,6 +728,74 @@ export function createWaveChart(container, dark = true) {
 
     clearGhostCandles() {
       renderGhostPaths([], ghostSeriesList, ghostProjSeries);
+    },
+
+    // ── ⑥ Image grammar: 1°→O / tunnel (O→B, A→C) / C→2° ─────────────────────
+    drawImage(spec, contColor) {
+      this.clearImage();
+      if (!spec?.segments?.length) return;
+      const col  = (contColor ?? T.scenario[0]).slice(0, 7);
+      const RAIL = '#9094b0'; // neutral/dim tunnel stroke
+
+      const addLine = (from, to, color, width, dashed, alpha) => {
+        const s = chart.addLineSeries({
+          color: color + alpha, lineWidth: width,
+          lineStyle: dashed ? LC.LineStyle.Dashed : LC.LineStyle.Solid,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        });
+        s.setData([{ time: from.time, value: from.price }, { time: to.time, value: to.price }]
+          .sort((a, b) => a.time - b.time));
+        imageSeries.push(s);
+      };
+      const addBand = (z) => {
+        const roof = Math.max(z.lo, z.hi), floor = Math.min(z.lo, z.hi);
+        const fill = chart.addAreaSeries({
+          topColor: col + '14', bottomColor: col + '04', lineColor: col + '30', lineWidth: 1,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        });
+        fill.setData([{ time: z.t1, value: roof }, { time: z.t2, value: roof }]);
+        imageSeries.push(fill);
+        const bot = chart.addLineSeries({
+          color: col + '30', lineWidth: 1, lineStyle: LC.LineStyle.Dotted,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        });
+        bot.setData([{ time: z.t1, value: floor }, { time: z.t2, value: floor }]);
+        imageSeries.push(bot);
+      };
+
+      for (const z of spec.zones ?? []) addBand(z);
+      for (const sg of spec.segments) {
+        const w = Math.max(0, Math.min(1, sg.weight ?? 1));
+        if (sg.role === 'impulse') {
+          addLine(sg.from, sg.to, col, 3, sg.dashed, sg.dashed ? (w >= 0.5 ? 'cc' : '88') : 'ff');
+        } else {
+          addLine(sg.from, sg.to, RAIL, 1, sg.dashed, sg.dashed ? (w >= 0.5 ? '99' : '55') : 'cc');
+        }
+      }
+
+      if (spec.points?.length) {
+        const ordered = [...spec.points].sort((a, b) => a.time - b.time);
+        imageMarkerSeries = chart.addLineSeries({
+          color: 'rgba(0,0,0,0)', priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        });
+        imageMarkerSeries.setData(ordered.map(p => ({ time: p.time, value: p.price })));
+        imageMarkerSeries.setMarkers(ordered.map(p => ({
+          time: p.time, position: p.above ? 'aboveBar' : 'belowBar',
+          color: col + 'dd', shape: 'circle', text: p.label, size: 1,
+        })));
+      }
+
+      const times = spec.segments.flatMap(s => [s.from.time, s.to.time]);
+      if (times.length) {
+        const lo = Math.min(...times), hi = Math.max(...times), pad = (hi - lo) * 0.12 || 1;
+        chart.timeScale().setVisibleRange({ from: lo - pad, to: hi + pad });
+      }
+    },
+
+    clearImage() {
+      imageSeries.forEach(s => chart.removeSeries(s));
+      imageSeries = [];
+      if (imageMarkerSeries) { chart.removeSeries(imageMarkerSeries); imageMarkerSeries = null; }
     },
 
     // Pinned ghost: warm amber tone, survives calls to drawGhostPaths.

@@ -97,6 +97,7 @@
     #status{font-size:.62rem;color:var(--dim);padding:.4rem 1.6rem}
     #status.error{color:var(--red)}
     button#annot-mode.on{opacity:1;color:var(--amber);border-color:var(--amber);background:rgba(240,165,0,0.08)}
+    button#image-mode.on{opacity:1;color:var(--cyan);border-color:var(--cyan);background:rgba(0,212,255,0.08)}
     #annot-bar{align-items:center;gap:.8rem;padding:.5rem 1rem;background:rgba(240,165,0,0.06);
       border-top:1px solid rgba(240,165,0,0.3);font-size:.68rem;flex-wrap:wrap}
     #annot-step{color:var(--amber);font-weight:500}
@@ -137,7 +138,7 @@
 
   <main>
     <div class="panel">
-      <div class="panel-title">STRUCTURE DE PRIX <span class="tabs" id="tabs"></span><button id="annot-mode" title="Annoter manuellement un pattern" style="font-family:inherit;font-size:.55rem;letter-spacing:.1em;padding:.2rem .5rem;opacity:.6">✏ ANNOTER</button></div>
+      <div class="panel-title">STRUCTURE DE PRIX <span class="tabs" id="tabs"></span><button id="image-mode" title="Vue schématique (1°→O · tunnel · C→2°)" style="font-family:inherit;font-size:.55rem;letter-spacing:.1em;padding:.2rem .5rem;opacity:.6;margin-right:.4rem">🖼 SCHÉMA</button><button id="annot-mode" title="Annoter manuellement un pattern" style="font-family:inherit;font-size:.55rem;letter-spacing:.1em;padding:.2rem .5rem;opacity:.6">✏ ANNOTER</button></div>
       <div id="chart"></div>
       <div id="annot-bar" style="display:none">
         <span id="annot-step"></span>
