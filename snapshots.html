@@ -156,16 +156,18 @@
 import { computeMetrics, evaluateSnapshotPath } from './src/core/snapshot.js';
 import { exportDataset, calibrate, applyCalibration, MIN_SAMPLES } from './src/core/calibrate.js';
 import { fetchKlines } from './src/core/data.js';
+import { idbGet, idbSet, idbDel } from './src/core/idb.js';
 
-const SNAP_KEY = 'pred-snaps-v1';
+const SNAP_DB_KEY = 'pred-snaps-v1';  // IndexedDB key (snapshots no longer in localStorage)
 
-function loadSnaps() {
-  try { return JSON.parse(localStorage.getItem(SNAP_KEY) ?? '[]'); }
+async function loadSnaps() {
+  try { return (await idbGet(SNAP_DB_KEY)) ?? []; }
   catch { return []; }
 }
 
-function saveSnaps(list) {
-  localStorage.setItem(SNAP_KEY, JSON.stringify(list));
+async function saveSnaps(list) {
+  try { await idbSet(SNAP_DB_KEY, list); }
+  catch { /* best-effort */ }
 }
 
 function fmt(ts) {
@@ -398,8 +400,8 @@ function renderSnapList(snaps) {
 
 // ── Render & events ───────────────────────────────────────────────────────────
 
-function render() {
-  const snaps = loadSnaps();
+async function render() {
+  const snaps = await loadSnaps();
   renderMetrics(snaps);
   renderCalibration(snaps);
   renderFeedback(snaps);
@@ -409,7 +411,7 @@ function render() {
 // ── Resolve all: fetch recent candles per (asset,tf) and path-evaluate ────────
 
 async function resolveAll() {
-  const snaps = loadSnaps();
+  const snaps = await loadSnaps();
   if (!snaps.length) { setStatus('Aucun snapshot à résoudre.'); return; }
 
   // Group pending snapshots by asset+tf so we fetch each series once.
@@ -440,7 +442,7 @@ async function resolveAll() {
     if (next.outcome != null && next.outcome !== 'pending') resolved++;
     return next;
   });
-  saveSnaps(updated);
+  await saveSnaps(updated);
   setStatus(`${resolved} snapshot(s) résolu(s) sur ${groups.size} série(s).`);
   render();
 }
@@ -453,14 +455,30 @@ function setStatus(msg) {
 document.getElementById('refresh-btn').addEventListener('click', render);
 document.getElementById('resolve-btn').addEventListener('click', resolveAll);
 
-document.getElementById('clear-btn').addEventListener('click', () => {
+document.getElementById('clear-btn').addEventListener('click', async () => {
   if (confirm('Effacer tous les snapshots ? Cette action est irréversible.')) {
-    localStorage.removeItem(SNAP_KEY);
+    await idbDel(SNAP_DB_KEY);
     render();
   }
 });
 
-render();
+// One-time migration: pull any pre-② snapshots out of localStorage into IndexedDB
+// (this page may be opened before index.html runs its own migration).
+async function migrateThenRender() {
+  const raw = localStorage.getItem('pred-snaps-v1');
+  if (raw != null) {
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length && (await idbGet(SNAP_DB_KEY)) == null) {
+        await idbSet(SNAP_DB_KEY, arr);
+      }
+    } catch { /* corrupt — drop */ }
+    localStorage.removeItem('pred-snaps-v1');
+  }
+  render();
+}
+
+migrateThenRender();
 </script>
 </body>
 </html>

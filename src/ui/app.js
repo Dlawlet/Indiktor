@@ -6,18 +6,25 @@ import { enumerateHypotheses, rankAndBeam } from '../core/predict.js';
 import { withTiming } from '../core/timing.js';
 import { takeSnapshot, evaluateSnapshotPath, computeMetrics } from '../core/snapshot.js';
 import { generateGhostPaths } from '../core/ghost.js';
+import { idbGet, idbSet } from '../core/idb.js';
 
 const TIMEFRAMES = ['1m', '15m', '1h', '4h', '1d'];
 const TF_LIMIT   = 500;
-const THEME_KEY  = 'wave-engine-theme';
-const ANNOT_KEY  = 'wave-annotations';
+// ② localStorage holds only tiny sync boot prefs; bulky data lives in IndexedDB.
+const THEME_KEY  = 'wave-engine-theme'; // sync at boot to avoid theme flash
+const LAST_TF_KEY = 'wave-last-tf';
+const LAST_K_KEY  = 'wave-last-k';
+const ANNOT_DB_KEY = 'annotations';     // IndexedDB key (was localStorage)
+const SNAP_DB_KEY  = 'pred-snaps-v1';   // IndexedDB key (was localStorage)
 
 const el      = (id) => document.getElementById(id);
 const sym     = ()   => el('asset').value;
 const fmtDate = (ts) => new Date(ts * 1000).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: '2-digit' });
 
 let waveChart;
-let activeTf = '1d';
+// Boot on the last-used timeframe (validated), not a hardcoded 1D.
+let activeTf = TIMEFRAMES.includes(localStorage.getItem(LAST_TF_KEY))
+  ? localStorage.getItem(LAST_TF_KEY) : '1d';
 let isDark   = (localStorage.getItem(THEME_KEY) ?? 'dark') === 'dark';
 let annotMode  = false;
 let annotPoints = [];
@@ -113,39 +120,54 @@ function continuation(bias) {
   };
 }
 
-// ── Snapshot persistence ──────────────────────────────────────────────────────
-const SNAP_KEY      = 'pred-snaps-v1';
+// ── Snapshot persistence (IndexedDB) ──────────────────────────────────────────
 const SNAP_INTERVAL = 2 * 60 * 60 * 1000;  // 2h
 const MAX_SNAPS     = 60;
 
-function loadSnaps() {
-  try { return JSON.parse(localStorage.getItem(SNAP_KEY) ?? '[]'); }
+async function loadSnaps() {
+  try { return (await idbGet(SNAP_DB_KEY)) ?? []; }
   catch { return []; }
 }
 
-function saveSnaps(list) {
-  localStorage.setItem(SNAP_KEY, JSON.stringify(list.slice(-MAX_SNAPS)));
+async function saveSnaps(list) {
+  try { await idbSet(SNAP_DB_KEY, list.slice(-MAX_SNAPS)); }
+  catch { /* IndexedDB unavailable (private mode) — snapshots are best-effort */ }
+}
+
+// One-time migration of any pre-② data out of localStorage into IndexedDB.
+async function migrateLocalStorage() {
+  for (const [oldKey, dbKey] of [['pred-snaps-v1', SNAP_DB_KEY], ['wave-annotations', ANNOT_DB_KEY]]) {
+    const raw = localStorage.getItem(oldKey);
+    if (raw == null) continue;
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length && (await idbGet(dbKey)) == null) {
+        await idbSet(dbKey, arr);
+      }
+    } catch { /* corrupt — drop */ }
+    localStorage.removeItem(oldKey);
+  }
 }
 
 // Path-aware evaluation: walk the candles that printed since each snapshot.
 // Only snapshots captured on the currently-loaded series (same asset+tf) can be
 // resolved here — others are left untouched until their series is viewed, or
 // resolved in bulk from the snapshots page (which fetches per series).
-function autoEvaluate(candles, asset, tf) {
-  const snaps = loadSnaps();
+async function autoEvaluate(candles, asset, tf) {
+  const snaps = await loadSnaps();
   if (!snaps.length) return null;
   const updated = snaps.map(s => {
     const closed  = s.outcome != null && s.outcome !== 'pending';
     const matches = s.params?.asset === asset && s.params?.tf === tf;
     return (closed || !matches) ? s : evaluateSnapshotPath(s, candles);
   });
-  saveSnaps(updated);
+  await saveSnaps(updated);
   return computeMetrics(updated);
 }
 
-function maybeCaptureSnap(hyps, livePrice) {
+async function maybeCaptureSnap(hyps, livePrice) {
   if (!hyps?.length) return;
-  const snaps = loadSnaps();
+  const snaps = await loadSnaps();
   const now   = Date.now();
   const asset = sym(), tf = activeTf;
   // Throttle PER series (asset+tf), not globally: a single global "last" would
@@ -157,7 +179,7 @@ function maybeCaptureSnap(hyps, livePrice) {
     id:        `${asset}_${tf}_${now}`,
     params:    { sensitivity: +el('sensitivity').value, minConf: +el('min-conf').value, asset, tf },
   }));
-  saveSnaps(snaps);
+  await saveSnaps(snaps);
 }
 
 function buildMetricsStr(metrics) {
@@ -208,8 +230,8 @@ async function run() {
   hyps = rankAndBeam(hyps, 4);
   hyps = hyps.filter(h => h.confidence.value >= PRED_CONF_FLOOR);  // ④a confidence floor
 
-  lastMetrics = autoEvaluate(candles, sym(), activeTf);
-  maybeCaptureSnap(hyps, livePrice);
+  lastMetrics = await autoEvaluate(candles, sym(), activeTf);
+  await maybeCaptureSnap(hyps, livePrice);
 
   cache[activeTf] = { candles, pivots, patterns, live, hyps };
 
@@ -240,6 +262,7 @@ function renderTabs() {
   wrap.querySelectorAll('.tab').forEach(b =>
     b.addEventListener('click', () => {
       activeTf = b.dataset.tf;
+      localStorage.setItem(LAST_TF_KEY, activeTf);  // ② remember last timeframe
       if (annotMode) exitAnnotMode();
       run();
     })
@@ -448,13 +471,14 @@ function renderPatternList(patterns, live, hyps = []) {
 
 // ── Annotation manuelle ───────────────────────────────────────────────────────
 
-function loadAnnotations() {
-  try { return JSON.parse(localStorage.getItem(ANNOT_KEY) || '[]'); }
+async function loadAnnotations() {
+  try { return (await idbGet(ANNOT_DB_KEY)) ?? []; }
   catch { return []; }
 }
 
-function saveAnnotations(list) {
-  localStorage.setItem(ANNOT_KEY, JSON.stringify(list));
+async function saveAnnotations(list) {
+  try { await idbSet(ANNOT_DB_KEY, list); }
+  catch { /* best-effort */ }
 }
 
 function classifyFromPoints(pts) {
@@ -523,7 +547,7 @@ function handleAnnotClick(time, price) {
   }
 }
 
-function confirmAnnotation() {
+async function confirmAnnotation() {
   const type = el('annot-type').value;
   const { bias, bRet } = classifyFromPoints(annotPoints);
   const annotation = {
@@ -536,9 +560,9 @@ function confirmAnnotation() {
     ],
     createdAt: Date.now(),
   };
-  const list = loadAnnotations();
+  const list = await loadAnnotations();
   list.push(annotation);
-  saveAnnotations(list);
+  await saveAnnotations(list);
 
   const data = cache[activeTf];
   const matches = data?.pivots ? findSimilarPatterns(annotation, data.pivots.filter(p => !p.tentative)) : [];
@@ -592,11 +616,20 @@ function setStatus(msg, isError = false) {
 
 el('theme-toggle').addEventListener('click', () => { isDark = !isDark; applyTheme(); });
 el('asset').addEventListener('change', () => { cache = {}; selectedIdx = null; if (annotMode) exitAnnotMode(); run(); });
-el('sensitivity').addEventListener('change', () => { cache = {}; run(); });
+el('sensitivity').addEventListener('change', () => {
+  localStorage.setItem(LAST_K_KEY, el('sensitivity').value);  // ② remember last K
+  cache = {}; run();
+});
 el('min-conf').addEventListener('change', () => { cache = {}; run(); });
 el('refresh').addEventListener('click', () => { cache = {}; run(); });
 el('annot-mode').addEventListener('click', () => { if (annotMode) exitAnnotMode(); else enterAnnotMode(); });
 el('annot-confirm').addEventListener('click', confirmAnnotation);
 el('annot-cancel').addEventListener('click', exitAnnotMode);
 
-run();
+// ── Boot ───────────────────────────────────────────────────────────────────────
+// Restore last K (sensitivity), migrate any pre-② localStorage data to IndexedDB,
+// then run on the restored timeframe.
+const savedK = localStorage.getItem(LAST_K_KEY);
+if (savedK != null && el('sensitivity')) el('sensitivity').value = savedK;
+
+migrateLocalStorage().finally(run);
