@@ -5,7 +5,7 @@ import { detectFlatPatterns, detectLiveFlat, FLAT_COLORS, FLAT_LABELS } from '..
 import { enumerateHypotheses, rankAndBeam } from '../core/predict.js';
 import { withTiming } from '../core/timing.js';
 import { takeSnapshot, evaluateSnapshotPath, computeMetrics } from '../core/snapshot.js';
-import { generateGhostCandles } from '../core/ghost.js';
+import { generateGhostPaths } from '../core/ghost.js';
 
 const TIMEFRAMES = ['1m', '15m', '1h', '4h', '1d'];
 const TF_LIMIT   = 500;
@@ -46,11 +46,21 @@ function savePin(p) {
   else   localStorage.removeItem(PIN_KEY);
 }
 
-// { ghostData:{candles,pivots}, color, sig, asset, tf, bias, stage } | null
+// { paths:[{candles,pivots,type,weight}], color, sig, asset, tf, bias, stage } | null
 let pinnedHyp = loadPin();
 
 function pinMatchesView() {
   return pinnedHyp && pinnedHyp.asset === sym() && pinnedHyp.tf === activeTf;
+}
+
+// Largest candle time across a set of ghost paths (for panning the right edge).
+function ghostMaxTime(paths) {
+  let mx = 0;
+  for (const p of paths ?? []) {
+    const last = p.candles?.[p.candles.length - 1];
+    if (last) mx = Math.max(mx, last.time);
+  }
+  return mx;
 }
 
 // Always reset the pinned overlay first so a stale pin from another series can
@@ -59,7 +69,7 @@ function redrawPinnedGhost() {
   if (!waveChart) return;
   waveChart.clearPinnedGhostCandles();
   if (!pinMatchesView()) return;
-  waveChart.drawPinnedGhostCandles(pinnedHyp.ghostData.candles, pinnedHyp.ghostData.pivots, pinnedHyp.color);
+  waveChart.drawPinnedGhostPaths(pinnedHyp.paths, pinnedHyp.color);
 }
 
 // Prediction scenario colors (match chart.js DARK.scenario)
@@ -357,9 +367,10 @@ function renderPatternList(patterns, live, hyps = []) {
         const color = PRED_COLORS[i % PRED_COLORS.length];
         waveChart.drawPrediction(hyp, color);
         const lp    = data.candles[data.candles.length - 1].close;
-        const ghost = generateGhostCandles(hyp, lp, data.candles);
-        waveChart.drawGhostCandles(ghost.candles, ghost.pivots, color);
-        if (ghost.candles.length) waveChart.extendRightEdge(ghost.candles[ghost.candles.length - 1].time);
+        const paths = generateGhostPaths(hyp, lp, data.candles);
+        waveChart.drawGhostPaths(paths, color);
+        const mx = ghostMaxTime(paths);
+        if (mx) waveChart.extendRightEdge(mx);
       }
       renderPatternList(data.patterns, data.live, data.hyps);
     });
@@ -383,11 +394,12 @@ function renderPatternList(patterns, live, hyps = []) {
         waveChart.clearPinnedGhostCandles();
       } else {
         const lp        = data.candles[data.candles.length - 1].close;
-        const ghostData = generateGhostCandles(hyp, lp, data.candles);
-        pinnedHyp = { ghostData, color, sig, asset: sym(), tf: activeTf, bias: hyp.bias, stage: hyp.stage };
+        const paths = generateGhostPaths(hyp, lp, data.candles);
+        pinnedHyp = { paths, color, sig, asset: sym(), tf: activeTf, bias: hyp.bias, stage: hyp.stage };
         savePin(pinnedHyp);
-        waveChart.drawPinnedGhostCandles(ghostData.candles, ghostData.pivots, color);
-        if (ghostData.candles.length) waveChart.extendRightEdge(ghostData.candles[ghostData.candles.length - 1].time);
+        waveChart.drawPinnedGhostPaths(paths, color);
+        const mx = ghostMaxTime(paths);
+        if (mx) waveChart.extendRightEdge(mx);
       }
       renderPatternList(data.patterns, data.live, data.hyps);
     });

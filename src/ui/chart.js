@@ -60,10 +60,10 @@ export function createWaveChart(container, dark = true) {
   let flatPriceLines = [];
   let liveSeries = [];      // in-progress flat overlay
   let livePriceLines = [];
-  let ghostSeries          = null;
-  let ghostProjSeries      = [];   // schematic lines owned by drawGhostCandles
-  let pinnedGhostSeries    = null; // separate series for pinned scenario (persists across clicks)
-  let pinnedGhostProjLines = [];
+  let ghostSeriesList      = [];   // active-selection ghost candle series (one per fork branch)
+  let ghostProjSeries      = [];   // schematic lines for active ghost paths
+  let pinnedGhostList      = [];   // pinned ghost candle series (one per branch, persists across clicks)
+  let pinnedGhostProjLines = [];   // schematic lines for pinned ghost paths
   let predSeries           = [];   // predictive hypothesis overlays
   let predPriceLines = [];
   let _predMarkers  = [];
@@ -112,7 +112,63 @@ export function createWaveChart(container, dark = true) {
     priceLines = [];
     projSeries.forEach((s) => chart.removeSeries(s));
     projSeries = [];
-    // ghostSeries is managed separately — clearGhostCandles() owns it
+    // ghost series are managed separately — clearGhostCandles() owns them
+  }
+
+  // Render a set of projected ghost paths (one per fork branch) into the given
+  // series/line arrays. Clears them first. Per-branch `weight` scales opacity so
+  // a stronger-fitting branch reads as more solid. tint: 'grey' (active selection)
+  // or 'amber' (pinned). Mutates the passed arrays in place.
+  function renderGhostPaths(paths, seriesArr, projArr, opts = {}) {
+    const { tint = 'grey', color = null, pinned = false } = opts;
+    seriesArr.forEach(s => chart.removeSeries(s));
+    projArr.forEach(s => chart.removeSeries(s));
+    seriesArr.length = 0;
+    projArr.length = 0;
+    if (!paths?.length) return;
+
+    const rgb = tint === 'amber'
+      ? { up: '200,170,80', wup: '220,185,90', dn: '150,110,40', wdn: '170,125,50' }
+      : { up: '160,160,160', wup: '160,160,160', dn: '110,110,110', wdn: '110,110,110' };
+
+    for (const path of paths) {
+      if (!path.candles?.length) continue;
+      const w = Math.max(0, Math.min(1, path.weight ?? 1));
+      const a = (base) => +(base * (0.55 + 0.45 * w)).toFixed(3);
+
+      const series = chart.addCandlestickSeries({
+        upColor:         `rgba(${rgb.up},${a(0.16)})`,
+        downColor:       `rgba(${rgb.dn},${a(0.16)})`,
+        wickUpColor:     `rgba(${rgb.wup},${a(0.30)})`,
+        wickDownColor:   `rgba(${rgb.wdn},${a(0.30)})`,
+        borderUpColor:   `rgba(${rgb.wup},${a(0.42)})`,
+        borderDownColor: `rgba(${rgb.wdn},${a(0.42)})`,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      });
+      series.setData(path.candles);
+      seriesArr.push(series);
+
+      if (!path.pivots?.length) continue;
+      const mk = (color ?? (tint === 'amber' ? '#f0c060' : '#aaaaaa')).slice(0, 7);
+      series.setMarkers(path.pivots.map(pv => ({
+        time:     pv.time,
+        position: pv.dir === 'up' ? 'aboveBar' : 'belowBar',
+        color:    mk + 'cc',
+        shape:    'circle',
+        text:     (pinned ? '📌' : '') + pv.label,
+        size:     1,
+      })));
+      const alpha = w >= 0.5 ? '99' : '55'; // lower-weight branch drawn fainter
+      const schematic = chart.addLineSeries({
+        color: mk + alpha, lineWidth: 1, lineStyle: LC.LineStyle.Dashed,
+        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      });
+      schematic.setData([
+        { time: path.candles[0].time, value: path.candles[0].open },
+        ...path.pivots.map(pv => ({ time: pv.time, value: pv.price })),
+      ]);
+      projArr.push(schematic);
+    }
   }
 
   function setWaveLabelsImpl(anchorPivots, waveLabels) {
@@ -461,53 +517,9 @@ export function createWaveChart(container, dark = true) {
       if (s.anchorPivots && s.waveLabels) setWaveLabelsImpl(s.anchorPivots, s.waveLabels);
     },
 
-    drawGhostCandles(ghostData, projectedPivots, scenarioColor) {
-      if (ghostSeries) { chart.removeSeries(ghostSeries); ghostSeries = null; }
-      ghostProjSeries.forEach(s => chart.removeSeries(s));
-      ghostProjSeries = [];
-      if (!ghostData?.length) return;
-      ghostSeries = chart.addCandlestickSeries({
-        upColor:        'rgba(160,160,160,0.18)',
-        downColor:      'rgba(110,110,110,0.18)',
-        wickUpColor:    'rgba(160,160,160,0.32)',
-        wickDownColor:  'rgba(110,110,110,0.32)',
-        borderUpColor:  'rgba(160,160,160,0.45)',
-        borderDownColor:'rgba(110,110,110,0.45)',
-        priceLineVisible: false,
-        lastValueVisible: false,
-        crosshairMarkerVisible: false,
-      });
-      ghostSeries.setData(ghostData);
-
-      if (projectedPivots?.length) {
-        // Circle markers with wave labels at each projected turning point
-        ghostSeries.setMarkers(projectedPivots.map((pv) => ({
-          time: pv.time,
-          position: pv.dir === 'up' ? 'aboveBar' : 'belowBar',
-          color: scenarioColor ?? 'rgba(200,200,200,0.75)',
-          shape: 'circle',
-          text: pv.label,
-          size: 1,
-        })));
-
-        // Dashed schematic polyline: start → each projected pivot.
-        // Draws the "wave shape outline" so the pattern structure is visible
-        // even when ghost candles are faint.
-        const color = (scenarioColor ?? '#aaaaaa') + '99';
-        const schematic = chart.addLineSeries({
-          color,
-          lineWidth: 1,
-          lineStyle: LC.LineStyle.Dashed,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
-        });
-        schematic.setData([
-          { time: ghostData[0].time, value: ghostData[0].open },
-          ...projectedPivots.map((pv) => ({ time: pv.time, value: pv.price })),
-        ]);
-        ghostProjSeries.push(schematic);
-      }
+    // Active-selection ghost: one or more projected paths (fork branches).
+    drawGhostPaths(paths, scenarioColor) {
+      renderGhostPaths(paths, ghostSeriesList, ghostProjSeries, { tint: 'grey', color: scenarioColor });
     },
 
     drawPatternShape: (scenario, anchorPivots) => drawPatternShapeImpl(scenario, anchorPivots),
@@ -713,55 +725,16 @@ export function createWaveChart(container, dark = true) {
     fit() { chart.timeScale().fitContent(); },
 
     clearGhostCandles() {
-      if (ghostSeries) { chart.removeSeries(ghostSeries); ghostSeries = null; }
-      ghostProjSeries.forEach(s => chart.removeSeries(s));
-      ghostProjSeries = [];
+      renderGhostPaths([], ghostSeriesList, ghostProjSeries);
     },
 
-    // Pinned ghost: drawn in a warm amber tone, survives calls to drawGhostCandles.
-    drawPinnedGhostCandles(ghostData, projectedPivots, color) {
-      if (pinnedGhostSeries) { chart.removeSeries(pinnedGhostSeries); pinnedGhostSeries = null; }
-      pinnedGhostProjLines.forEach(s => chart.removeSeries(s));
-      pinnedGhostProjLines = [];
-      if (!ghostData?.length) return;
-
-      pinnedGhostSeries = chart.addCandlestickSeries({
-        upColor:         'rgba(200,170,80,0.14)',
-        downColor:       'rgba(150,110,40,0.14)',
-        wickUpColor:     'rgba(220,185,90,0.30)',
-        wickDownColor:   'rgba(170,125,50,0.30)',
-        borderUpColor:   'rgba(220,185,90,0.40)',
-        borderDownColor: 'rgba(170,125,50,0.40)',
-        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
-      });
-      pinnedGhostSeries.setData(ghostData);
-
-      if (projectedPivots?.length) {
-        pinnedGhostSeries.setMarkers(projectedPivots.map(pv => ({
-          time:     pv.time,
-          position: pv.dir === 'up' ? 'aboveBar' : 'belowBar',
-          color:    (color ?? '#f0c060') + 'cc',
-          shape:    'circle',
-          text:     '📌' + pv.label,
-          size:     1,
-        })));
-        const col      = (color?.slice(0, 7) ?? '#f0c060');
-        const schematic = chart.addLineSeries({
-          color: col + '88', lineWidth: 1, lineStyle: LC.LineStyle.Dashed,
-          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
-        });
-        schematic.setData([
-          { time: ghostData[0].time, value: ghostData[0].open },
-          ...projectedPivots.map(pv => ({ time: pv.time, value: pv.price })),
-        ]);
-        pinnedGhostProjLines.push(schematic);
-      }
+    // Pinned ghost: warm amber tone, survives calls to drawGhostPaths.
+    drawPinnedGhostPaths(paths, color) {
+      renderGhostPaths(paths, pinnedGhostList, pinnedGhostProjLines, { tint: 'amber', color, pinned: true });
     },
 
     clearPinnedGhostCandles() {
-      if (pinnedGhostSeries) { chart.removeSeries(pinnedGhostSeries); pinnedGhostSeries = null; }
-      pinnedGhostProjLines.forEach(s => chart.removeSeries(s));
-      pinnedGhostProjLines = [];
+      renderGhostPaths([], pinnedGhostList, pinnedGhostProjLines);
     },
 
     extendRightEdge(maxTime) {
