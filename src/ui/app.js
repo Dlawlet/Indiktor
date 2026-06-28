@@ -37,21 +37,34 @@ function hypSig(h) {
   return [a.O?.time, a.A?.time, a.B?.time ?? '', a.C?.time ?? '', h?.stage, h?.bias].join('|');
 }
 
-function loadPin() {
-  try { return JSON.parse(localStorage.getItem(PIN_KEY)) || null; }
-  catch { return null; }
+// ③ Pins are scoped per (série, TF): a map keyed by `${asset}|${tf}`, so a pin
+// on 1h and a pin on 4h coexist and each is only drawn on its own view.
+const pinKey = () => `${sym()}|${activeTf}`;
+
+function loadPins() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PIN_KEY));
+    if (!raw || typeof raw !== 'object') return {};
+    // Soft-migrate an old single-pin object → keyed map (or purge if unusable).
+    if (raw.sig || raw.paths || raw.ghostData) {
+      return (raw.asset && raw.tf && raw.paths)
+        ? { [`${raw.asset}|${raw.tf}`]: { paths: raw.paths, color: raw.color, sig: raw.sig, bias: raw.bias, stage: raw.stage } }
+        : {}; // pre-④b format (ghostData) or unknown series → purge cleanly
+    }
+    return raw; // already a map
+  } catch { return {}; }
 }
-function savePin(p) {
-  if (p) localStorage.setItem(PIN_KEY, JSON.stringify(p));
-  else   localStorage.removeItem(PIN_KEY);
+function savePins(map) {
+  if (Object.keys(map).length) localStorage.setItem(PIN_KEY, JSON.stringify(map));
+  else localStorage.removeItem(PIN_KEY);
 }
 
-// { paths:[{candles,pivots,type,weight}], color, sig, asset, tf, bias, stage } | null
-let pinnedHyp = loadPin();
+// { [`${asset}|${tf}`]: { paths, color, sig, bias, stage } }
+let pins = loadPins();
 
-function pinMatchesView() {
-  return pinnedHyp && pinnedHyp.asset === sym() && pinnedHyp.tf === activeTf;
-}
+// The pin (if any) belonging to the current asset+tf view.
+function currentPin() { return pins[pinKey()] ?? null; }
+function pinMatchesView() { return !!currentPin(); }
 
 // Largest candle time across a set of ghost paths (for panning the right edge).
 function ghostMaxTime(paths) {
@@ -68,8 +81,9 @@ function ghostMaxTime(paths) {
 function redrawPinnedGhost() {
   if (!waveChart) return;
   waveChart.clearPinnedGhostCandles();
-  if (!pinMatchesView()) return;
-  waveChart.drawPinnedGhostPaths(pinnedHyp.paths, pinnedHyp.color);
+  const p = currentPin();
+  if (!p) return;
+  waveChart.drawPinnedGhostPaths(p.paths, p.color);
 }
 
 // Prediction scenario colors (match chart.js DARK.scenario)
@@ -268,7 +282,7 @@ function renderPatternList(patterns, live, hyps = []) {
       const stLbl    = STAGE_LABEL[h.stage] ?? h.stage;
       const branch   = h.typeBranch?.join(' · ') ?? '—';
       const sel      = selectedHypIdx === i;
-      const isPinned = pinMatchesView() && pinnedHyp.sig === hypSig(h);
+      const isPinned = currentPin()?.sig === hypSig(h);
 
       let targetLine = '';
       const soft = h.zones?.invalidation?.soft;
@@ -300,8 +314,9 @@ function renderPatternList(patterns, live, hyps = []) {
   // Fallback unpin: a pin is active on this series but its hypothesis is no
   // longer among the shown beam (it dropped out on a refresh) — give the user
   // a guaranteed way to remove it.
-  if (pinMatchesView() && !hyps.some(h => hypSig(h) === pinnedHyp.sig)) {
-    const cont = continuation(pinnedHyp.bias);
+  const cp = currentPin();
+  if (cp && !hyps.some(h => hypSig(h) === cp.sig)) {
+    const cont = continuation(cp.bias);
     html += `<div class="pin-orphan">📌 épingle active (${cont.label})
       <button id="pin-clear">retirer</button></div>`;
   }
@@ -337,8 +352,8 @@ function renderPatternList(patterns, live, hyps = []) {
   // Fallback unpin handler
   const pinClear = el('pin-clear');
   if (pinClear) pinClear.addEventListener('click', () => {
-    pinnedHyp = null;
-    savePin(null);
+    delete pins[pinKey()];
+    savePins(pins);
     waveChart.clearPinnedGhostCandles();
     renderPatternList(patterns, live, hyps);
   });
@@ -388,15 +403,16 @@ function renderPatternList(patterns, live, hyps = []) {
       const color = PRED_COLORS[i % PRED_COLORS.length];
       const sig   = hypSig(hyp);
 
-      if (pinMatchesView() && pinnedHyp.sig === sig) {
-        pinnedHyp = null;
-        savePin(null);
+      const key = pinKey();
+      if (pins[key]?.sig === sig) {
+        delete pins[key];
+        savePins(pins);
         waveChart.clearPinnedGhostCandles();
       } else {
-        const lp        = data.candles[data.candles.length - 1].close;
+        const lp    = data.candles[data.candles.length - 1].close;
         const paths = generateGhostPaths(hyp, lp, data.candles);
-        pinnedHyp = { paths, color, sig, asset: sym(), tf: activeTf, bias: hyp.bias, stage: hyp.stage };
-        savePin(pinnedHyp);
+        pins[key]   = { paths, color, sig, bias: hyp.bias, stage: hyp.stage };
+        savePins(pins);
         waveChart.drawPinnedGhostPaths(paths, color);
         const mx = ghostMaxTime(paths);
         if (mx) waveChart.extendRightEdge(mx);
