@@ -47,7 +47,14 @@
       .panel-title{font-size:.52rem;padding:.6rem .8rem}
       .row .k{min-width:68px}
     }
-    .panel{background:var(--bg2);border:1px solid var(--border);border-radius:4px;overflow:hidden}
+    .panel{background:var(--bg2);border:1px solid var(--border);border-radius:4px;overflow:hidden;position:relative}
+    .chart-loading{position:absolute;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;
+      gap:.7rem;background:rgba(5,5,14,0.6);color:var(--amber);font-size:.7rem;letter-spacing:.12em;
+      font-family:'Orbitron',monospace}
+    body.light .chart-loading{background:rgba(244,245,251,0.65)}
+    .spinner{width:22px;height:22px;border:2px solid var(--border);border-top-color:var(--amber);
+      border-radius:50%;animation:spin .7s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
     .panel.span-all{grid-column:1/-1}
     .panel-title{font-family:'Orbitron',monospace;font-size:.6rem;letter-spacing:.2em;color:var(--amber);
       padding:.8rem 1rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
@@ -140,6 +147,9 @@
     <div class="panel">
       <div class="panel-title">STRUCTURE DE PRIX <span class="tabs" id="tabs"></span><button id="image-mode" title="Vue schématique (1°→O · tunnel · C→2°)" style="font-family:inherit;font-size:.55rem;letter-spacing:.1em;padding:.2rem .5rem;opacity:.6;margin-right:.4rem">🖼 SCHÉMA</button><button id="annot-mode" title="Annoter manuellement un pattern" style="font-family:inherit;font-size:.55rem;letter-spacing:.1em;padding:.2rem .5rem;opacity:.6">✏ ANNOTER</button></div>
       <div id="chart"></div>
+      <div id="chart-loading" class="chart-loading" style="display:none">
+        <span class="spinner"></span><span id="loading-msg">Analyse…</span>
+      </div>
       <div id="annot-bar" style="display:none">
         <span id="annot-step"></span>
         <span id="annot-type-info"></span>

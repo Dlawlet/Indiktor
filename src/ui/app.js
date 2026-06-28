@@ -12,7 +12,12 @@ import { idbGet, idbSet, idbDel, snapGetAll, snapPut, snapBulkPut } from '../cor
 import { buildParams, hashParams } from '../core/params.js';
 
 const TIMEFRAMES = ['1m', '15m', '1h', '4h', '1d'];
-const TF_LIMIT   = 500;
+// Candle counts chosen so each timeframe spans ≈ 1 month or more where feasible
+// (1d/4h/1h/15m ≥ 1 month; 1m is impractical for a month so it's a best-effort
+// ~1.4 days). Wider windows mean a pinned scenario from hours ago still has its
+// context loaded on return.
+const TF_LIMITS = { '1m': 2000, '15m': 2880, '1h': 1000, '4h': 750, '1d': 500 };
+const tfLimit = () => TF_LIMITS[activeTf] ?? 500;
 // ② localStorage holds only tiny sync boot prefs; bulky data lives in IndexedDB.
 const THEME_KEY  = 'wave-engine-theme'; // sync at boot to avoid theme flash
 const LAST_TF_KEY = 'wave-last-tf';
@@ -55,13 +60,22 @@ function loadPins() {
   try {
     const raw = JSON.parse(localStorage.getItem(PIN_KEY));
     if (!raw || typeof raw !== 'object') return {};
+    let map;
     // Soft-migrate an old single-pin object → keyed map (or purge if unusable).
     if (raw.sig || raw.paths || raw.ghostData) {
-      return (raw.asset && raw.tf && raw.paths)
+      map = (raw.asset && raw.tf && Array.isArray(raw.paths))
         ? { [`${raw.asset}|${raw.tf}`]: { paths: raw.paths, color: raw.color, sig: raw.sig, bias: raw.bias, stage: raw.stage } }
         : {}; // pre-④b format (ghostData) or unknown series → purge cleanly
+    } else {
+      map = raw; // already a map
     }
-    return raw; // already a map
+    // Keep only well-formed pins (paths = array of {candles[]}), so a corrupt
+    // entry can never throw during render and freeze the chart.
+    const clean = {};
+    for (const [k, p] of Object.entries(map)) {
+      if (p && Array.isArray(p.paths) && p.paths.every(pt => Array.isArray(pt?.candles))) clean[k] = p;
+    }
+    return clean;
   } catch { return {}; }
 }
 function savePins(map) {
@@ -92,8 +106,26 @@ function redrawPinnedGhost() {
   if (!waveChart) return;
   waveChart.clearPinnedGhostCandles();
   const p = currentPin();
-  if (!p) return;
-  waveChart.drawPinnedGhostPaths(p.paths, p.color);
+  if (!p?.paths?.length) return;
+  try {
+    waveChart.drawPinnedGhostPaths(p.paths, p.color);
+    const mx = ghostMaxTime(p.paths);
+    if (mx) waveChart.extendRightEdge(mx); // keep the pinned projection in view on return
+  } catch {
+    // A stale/corrupt pin must never break the chart — drop it.
+    delete pins[pinKey()];
+    savePins(pins);
+    waveChart.clearPinnedGhostCandles();
+  }
+}
+
+// Loading overlay over the chart — shown while fetching/analysing so a slow or
+// stalled pass is never mistaken for a frozen app.
+function setLoading(on, msg = 'Analyse…') {
+  const o = el('chart-loading');
+  if (!o) return;
+  if (on) { const m = el('loading-msg'); if (m) m.textContent = msg; o.style.display = 'flex'; }
+  else o.style.display = 'none';
 }
 
 // Prediction scenario colors (match chart.js DARK.scenario)
@@ -247,55 +279,69 @@ applyTheme();
 
 // ── Fetch + détection ────────────────────────────────────────────────────────
 
+let runSeq = 0;  // guards against overlapping runs (rapid tab/asset switches)
+
 async function run() {
+  const mySeq = ++runSeq;
   const sensitivity = +el('sensitivity').value;
   setStatus(`Chargement ${sym()} ${activeTf}…`);
+  setLoading(true, `Chargement ${sym()} ${activeTf}…`);
 
-  let candles;
   try {
-    candles = await fetchKlines(sym(), activeTf, TF_LIMIT);
+    let candles;
+    try {
+      candles = await fetchKlines(sym(), activeTf, tfLimit());
+    } catch (e) {
+      setStatus(`Erreur réseau: ${e.message} — réessayer avec ↻`, true);
+      return; // finally still hides the spinner
+    }
+    if (mySeq !== runSeq) return; // a newer run started; abandon this one
+
+    setLoading(true, `Analyse ${sym()} ${activeTf}…`);
+    el('price').textContent = '$' + candles[candles.length - 1].close.toLocaleString('en-US', { maximumFractionDigits: 0 });
+    const pivots   = zigzag(candles, { atrMult: sensitivity, atrPeriod: 14 });
+    const confirmed = pivots.filter(p => !p.tentative);
+    const minConf   = +el('min-conf').value;
+    const patterns  = detectFlatPatterns(confirmed, { minConfidence: minConf, maxLegSpan: 3, candles });
+    const live      = detectLiveFlat(pivots, { minConfidence: minConf * 0.7 });
+
+    // Predictive engine: enumerate hypotheses from confirmed pivots
+    const livePrice  = candles[candles.length - 1].close;
+    const currentBar = candles.length - 1;
+    const timingWins = await loadTimingWindows();  // ① empirical durations (Fibonacci fallback)
+    let hyps = enumerateHypotheses(confirmed, livePrice);
+    hyps = withTiming(hyps, currentBar, { windows: timingWins, tf: activeTf });
+    hyps = rankAndBeam(hyps, 4);
+    hyps = hyps.filter(h => h.confidence.value >= PRED_CONF_FLOOR);  // ④a confidence floor
+
+    lastMetrics = await autoEvaluate(candles, sym(), activeTf);
+    await maybeCaptureSnap(hyps, livePrice);
+    if (mySeq !== runSeq) return;
+
+    cache[activeTf] = { candles, pivots, patterns, live, hyps };
+
+    if (!waveChart) waveChart = createWaveChart(el('chart'), isDark);
+    waveChart.setCandles(candles);
+    waveChart.setZigzag(pivots);
+    waveChart.clearFlatPatterns();
+    waveChart.clearPredictions();
+    waveChart.clearImage();
+    waveChart.drawFlatPatterns(patterns);
+    if (live) waveChart.drawLiveFlat(live);
+    waveChart.fit();
+    redrawPinnedGhost();
+
+    selectedIdx    = null;
+    selectedHypIdx = null;
+    renderTabs();
+    renderPatternList(patterns, live, hyps);
+    setStatus(`${patterns.length} patterns · ${sym()} ${activeTf} · ${new Date().toLocaleTimeString()}`);
   } catch (e) {
-    setStatus(`Erreur réseau: ${e.message}`, true);
-    return;
+    setStatus(`Erreur: ${e.message}`, true);
+    console.error('run() failed:', e);
+  } finally {
+    if (mySeq === runSeq) setLoading(false);
   }
-
-  el('price').textContent = '$' + candles[candles.length - 1].close.toLocaleString('en-US', { maximumFractionDigits: 0 });
-  const pivots   = zigzag(candles, { atrMult: sensitivity, atrPeriod: 14 });
-  const confirmed = pivots.filter(p => !p.tentative);
-  const minConf   = +el('min-conf').value;
-  const patterns  = detectFlatPatterns(confirmed, { minConfidence: minConf, maxLegSpan: 3, candles });
-  const live      = detectLiveFlat(pivots, { minConfidence: minConf * 0.7 });
-
-  // Predictive engine: enumerate hypotheses from confirmed pivots
-  const livePrice  = candles[candles.length - 1].close;
-  const currentBar = candles.length - 1;
-  const timingWins = await loadTimingWindows();  // ① empirical durations (Fibonacci fallback)
-  let hyps = enumerateHypotheses(confirmed, livePrice);
-  hyps = withTiming(hyps, currentBar, { windows: timingWins, tf: activeTf });
-  hyps = rankAndBeam(hyps, 4);
-  hyps = hyps.filter(h => h.confidence.value >= PRED_CONF_FLOOR);  // ④a confidence floor
-
-  lastMetrics = await autoEvaluate(candles, sym(), activeTf);
-  await maybeCaptureSnap(hyps, livePrice);
-
-  cache[activeTf] = { candles, pivots, patterns, live, hyps };
-
-  if (!waveChart) waveChart = createWaveChart(el('chart'), isDark);
-  waveChart.setCandles(candles);
-  waveChart.setZigzag(pivots);
-  waveChart.clearFlatPatterns();
-  waveChart.clearPredictions();
-  waveChart.clearImage();
-  waveChart.drawFlatPatterns(patterns);
-  if (live) waveChart.drawLiveFlat(live);
-  waveChart.fit();
-  redrawPinnedGhost();
-
-  selectedIdx    = null;
-  selectedHypIdx = null;
-  renderTabs();
-  renderPatternList(patterns, live, hyps);
-  setStatus(`${patterns.length} patterns · ${sym()} ${activeTf} · ${new Date().toLocaleTimeString()}`);
 }
 
 // ── Onglets TF ───────────────────────────────────────────────────────────────
@@ -740,8 +786,16 @@ async function applyStoredParams() {
   if (Number.isFinite(ap.predFloor)) PRED_CONF_FLOOR = ap.predFloor;
 }
 
+// Cap any awaited boot step so a stalled/blocked IndexedDB can never freeze the
+// first paint (the step still completes in the background; data is picked up on
+// the next run).
+const withTimeout = (p, ms) => Promise.race([
+  Promise.resolve(p).catch(() => {}),
+  new Promise(res => setTimeout(res, ms)),
+]);
+
 (async () => {
-  try { await migrateStorage(); } catch { /* best-effort */ }
-  try { await applyStoredParams(); } catch { /* best-effort */ }
-  run();
+  await withTimeout(migrateStorage(), 3000);   // normally <100ms; bounded if blocked
+  await withTimeout(applyStoredParams(), 1500);
+  run();                                         // always reached
 })();

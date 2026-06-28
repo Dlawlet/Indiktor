@@ -46,7 +46,12 @@ export function resample(candles, factor) {
  * Fetch `limit` candles of `interval` for `symbol`, paginating backwards so we
  * can exceed Binance's 1000-per-request cap. Returns ascending candles.
  */
-export async function fetchKlines(symbol, interval, limit = 1000, fetchImpl = fetch) {
+export async function fetchKlines(symbol, interval, limit = 1000, fetchImpl = fetch, { timeoutMs = 15000 } = {}) {
+  // Per-request abort timeout so a stalled network call fails fast instead of
+  // hanging the caller forever (which manifests as a "frozen" app).
+  const timeoutSignal = () =>
+    (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(timeoutMs) : undefined;
+
   const collected = [];
   let endTime; // ms; undefined => most recent
   while (collected.length < limit) {
@@ -57,7 +62,7 @@ export async function fetchKlines(symbol, interval, limit = 1000, fetchImpl = fe
     url.searchParams.set('limit', String(need));
     if (endTime != null) url.searchParams.set('endTime', String(endTime));
 
-    const res = await fetchImpl(url.toString(), { cache: 'no-store' });
+    const res = await fetchImpl(url.toString(), { cache: 'no-store', signal: timeoutSignal() });
     if (!res.ok) throw new Error(`Binance ${res.status} for ${symbol} ${interval}`);
     const batch = await res.json();
     if (!Array.isArray(batch) || batch.length === 0) break;

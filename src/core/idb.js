@@ -14,11 +14,18 @@ const VERSION   = 2;
 
 let dbPromise = null;
 
+const OPEN_TIMEOUT_MS = 8000;
+
 function open() {
   if (dbPromise) return dbPromise;
   const idb = globalThis.indexedDB;
   if (!idb) return Promise.reject(new Error('IndexedDB unavailable'));
   dbPromise = new Promise((resolve, reject) => {
+    // Guarantee the promise always settles — a version upgrade can otherwise
+    // hang forever ('onblocked') when another tab holds the DB open at the old
+    // version, which would freeze any awaited boot step.
+    let settled = false;
+    const done = (fn, arg) => { if (!settled) { settled = true; fn(arg); } };
     const req = idb.open(DB_NAME, VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
@@ -31,9 +38,13 @@ function open() {
         s.createIndex('outcome',   'outcome',   { unique: false });
       }
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror   = () => reject(req.error);
+    req.onsuccess = () => done(resolve, req.result);
+    req.onerror   = () => done(reject, req.error);
+    req.onblocked = () => done(reject, new Error('IndexedDB upgrade blocked — close other tabs'));
+    setTimeout(() => done(reject, new Error('IndexedDB open timeout')), OPEN_TIMEOUT_MS);
   });
+  // Don't cache a rejection forever — allow a later retry.
+  dbPromise.catch(() => { dbPromise = null; });
   return dbPromise;
 }
 
